@@ -25,7 +25,11 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG')
 
+# Parse ALLOWED_HOSTS and add Railway's health check domain
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[])
+# Railway uses healthcheck.railway.app for health monitoring
+if not DEBUG:
+    ALLOWED_HOSTS.append('healthcheck.railway.app')
 
 
 # Application definition
