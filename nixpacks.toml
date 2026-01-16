@@ -1,0 +1,16 @@
+# Nixpacks build configuration for Railway
+# This prevents migrations from running during build phase
+
+[phases.setup]
+nixPkgs = ["python313"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+# Only collect static files during build (no database needed)
+cmds = ["python manage.py collectstatic --noinput"]
+
+[start]
+# Start command - just run the web server
+cmd = "gunicorn privcap_hub.wsgi --log-file -"
