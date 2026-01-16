@@ -1,0 +1,3220 @@
+openapi: 3.0.3
+info:
+  title: PrivCap Hub API
+  version: 1.0.0
+  description: "Comprehensive API for private capital investment management platform.\n
+    \   \n    ## Features\n    - **Authentication**: Email verification, JWT tokens,
+    password reset\n    - **Portfolio Management**: Investments, capital activities,
+    performance tracking\n    - **Analytics Dashboard**: Quarterly performance, asset
+    allocation, risk metrics\n    - **Marketplace**: Investment opportunities, watchlist,
+    document management\n    - **Ownership Transfers**: Transfer workflow, fee calculation,
+    status tracking\n    - **Account Management**: Profile, security, notifications,
+    documents, activity logs\n    - **Investor Network**: Directory, connections,
+    investor profiles\n    \n    ## Authentication\n    All endpoints (except registration
+    and login) require JWT authentication.\n    Include the token in the Authorization
+    header: `Bearer <access_token>`\n    "
+  contact:
+    name: PrivCap Hub Support
+    email: support@privcaphub.com
+  license:
+    name: Proprietary
+paths:
+  /api/auth/account/activity/:
+    get:
+      operationId: auth_account_activity_retrieve
+      description: Get user activity log.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/change_password/:
+    post:
+      operationId: auth_account_change_password_create
+      description: Change user password.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/delete_document/:
+    delete:
+      operationId: auth_account_delete_document_destroy
+      description: Delete a specific document.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/auth/account/document_download/:
+    get:
+      operationId: auth_account_document_download_retrieve
+      description: Download a specific document.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/documents/:
+    get:
+      operationId: auth_account_documents_retrieve
+      description: List or upload user documents.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: auth_account_documents_create
+      description: List or upload user documents.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/notification_preferences/:
+    get:
+      operationId: auth_account_notification_preferences_retrieve
+      description: Get or update notification preferences.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: auth_account_notification_preferences_partial_update
+      description: Get or update notification preferences.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/profile/:
+    get:
+      operationId: auth_account_profile_retrieve
+      description: Get or update user profile.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: auth_account_profile_partial_update
+      description: Get or update user profile.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/revoke_session/:
+    delete:
+      operationId: auth_account_revoke_session_destroy
+      description: Revoke a specific session.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/auth/account/sessions/:
+    get:
+      operationId: auth_account_sessions_retrieve
+      description: Get active user sessions.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/account/upload_photo/:
+    post:
+      operationId: auth_account_upload_photo_create
+      description: Upload profile photo.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/login/:
+    post:
+      operationId: auth_login_create
+      description: Authenticate user with email and password. Returns JWT tokens.
+        Account lockout after 5 failed attempts.
+      summary: User login
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/me/:
+    get:
+      operationId: auth_me_retrieve
+      description: Retrieve authenticated user profile information.
+      summary: Get user profile
+      tags:
+      - Authentication
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    put:
+      operationId: auth_me_update
+      description: |-
+        API endpoint for retrieving and updating user profile.
+        Requires authentication.
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UserRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    patch:
+      operationId: auth_me_partial_update
+      description: |-
+        API endpoint for retrieving and updating user profile.
+        Requires authentication.
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedUserRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedUserRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedUserRequest'
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/auth/network/{id}/profile/:
+    get:
+      operationId: auth_network_profile_retrieve
+      description: Get detailed investor profile with portfolio overview and recent
+        investments.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/network/{id}/update_connection/:
+    patch:
+      operationId: auth_network_update_connection_partial_update
+      description: Accept or reject a connection request.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/network/connect/:
+    post:
+      operationId: auth_network_connect_create
+      description: Send connection request to another investor.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/network/connections/:
+    get:
+      operationId: auth_network_connections_retrieve
+      description: Get user's connections.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/network/directory/:
+    get:
+      operationId: auth_network_directory_retrieve
+      description: Get investor directory with search and filters.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/network/my_profile/:
+    get:
+      operationId: auth_network_my_profile_retrieve
+      description: Get or update own investor profile.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: auth_network_my_profile_partial_update
+      description: Get or update own investor profile.
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/password-reset/confirm/:
+    post:
+      operationId: auth_password_reset_confirm_create
+      description: Set new password after OTP verification.
+      summary: Confirm password reset
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/password-reset/request/:
+    post:
+      operationId: auth_password_reset_request_create
+      description: Request password reset OTP. Sends 6-digit code to user email.
+      summary: Request password reset
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/password-reset/verify/:
+    post:
+      operationId: auth_password_reset_verify_create
+      description: Verify the OTP sent for password reset.
+      summary: Verify password reset OTP
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetVerifyRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PasswordResetVerifyRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetVerifyRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/register/:
+    post:
+      operationId: auth_register_create
+      description: Create a new user account. Sends a 6-digit OTP to the provided
+        email for verification.
+      summary: Register new user
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegistrationRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserRegistrationRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UserRegistrationRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+              examples:
+                RegistrationSuccess:
+                  value:
+                    message: Registration successful. Please check your email for
+                      verification code.
+                    user:
+                      email: investor@example.com
+                      first_name: John
+                      last_name: Doe
+                  summary: Registration Success
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/resend-otp/:
+    post:
+      operationId: auth_resend_otp_create
+      description: Resend verification OTP to user email. Can be used for both email
+        verification and password reset.
+      summary: Resend OTP code
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendOTPRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResendOTPRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResendOTPRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/auth/token/refresh/:
+    post:
+      operationId: auth_token_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/auth/verify-email/:
+    post:
+      operationId: auth_verify_email_create
+      description: Verify user email address using the 6-digit OTP sent during registration.
+        Returns JWT tokens upon successful verification.
+      summary: Verify email with OTP
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+              examples:
+                VerificationSuccess:
+                  value:
+                    message: Email verified successfully.
+                    user:
+                      email: investor@example.com
+                      first_name: John
+                    tokens:
+                      refresh: eyJ0eXAiOiJKV1QiLCJhbGc...
+                      access: eyJ0eXAiOiJKV1QiLCJhbGc...
+                  summary: Verification Success
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/capital-activities/:
+    get:
+      operationId: capital_activities_list
+      description: |-
+        ViewSet for managing capital activities.
+
+        Provides CRUD operations for capital calls and distributions.
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - capital-activities
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCapitalActivityList'
+          description: ''
+    post:
+      operationId: capital_activities_create
+      description: |-
+        ViewSet for managing capital activities.
+
+        Provides CRUD operations for capital calls and distributions.
+      tags:
+      - capital-activities
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapitalActivityRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CapitalActivityRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CapitalActivityRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapitalActivity'
+          description: ''
+  /api/capital-activities/{id}/:
+    get:
+      operationId: capital_activities_retrieve
+      description: |-
+        ViewSet for managing capital activities.
+
+        Provides CRUD operations for capital calls and distributions.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - capital-activities
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapitalActivity'
+          description: ''
+    put:
+      operationId: capital_activities_update
+      description: |-
+        ViewSet for managing capital activities.
+
+        Provides CRUD operations for capital calls and distributions.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - capital-activities
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapitalActivityRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CapitalActivityRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CapitalActivityRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapitalActivity'
+          description: ''
+    patch:
+      operationId: capital_activities_partial_update
+      description: |-
+        ViewSet for managing capital activities.
+
+        Provides CRUD operations for capital calls and distributions.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - capital-activities
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedCapitalActivityRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedCapitalActivityRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedCapitalActivityRequest'
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapitalActivity'
+          description: ''
+    delete:
+      operationId: capital_activities_destroy
+      description: |-
+        ViewSet for managing capital activities.
+
+        Provides CRUD operations for capital calls and distributions.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - capital-activities
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/investments/:
+    get:
+      operationId: investments_list
+      description: |-
+        ViewSet for managing investments.
+
+        Provides CRUD operations for investments and individual investment details.
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - investments
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedInvestmentListList'
+          description: ''
+    post:
+      operationId: investments_create
+      description: |-
+        ViewSet for managing investments.
+
+        Provides CRUD operations for investments and individual investment details.
+      tags:
+      - investments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvestmentCreateUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/InvestmentCreateUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/InvestmentCreateUpdateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestmentCreateUpdate'
+          description: ''
+  /api/investments/{id}/:
+    get:
+      operationId: investments_retrieve
+      description: |-
+        ViewSet for managing investments.
+
+        Provides CRUD operations for investments and individual investment details.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - investments
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestmentDetail'
+          description: ''
+    put:
+      operationId: investments_update
+      description: |-
+        ViewSet for managing investments.
+
+        Provides CRUD operations for investments and individual investment details.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - investments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvestmentCreateUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/InvestmentCreateUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/InvestmentCreateUpdateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestmentCreateUpdate'
+          description: ''
+    patch:
+      operationId: investments_partial_update
+      description: |-
+        ViewSet for managing investments.
+
+        Provides CRUD operations for investments and individual investment details.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - investments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedInvestmentCreateUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedInvestmentCreateUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedInvestmentCreateUpdateRequest'
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestmentCreateUpdate'
+          description: ''
+    delete:
+      operationId: investments_destroy
+      description: |-
+        ViewSet for managing investments.
+
+        Provides CRUD operations for investments and individual investment details.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - investments
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/investments/{id}/performance_history/:
+    get:
+      operationId: investments_performance_history_retrieve
+      description: |-
+        Get performance history for an investment.
+        Query params: days (default 365)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - investments
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestmentDetail'
+          description: ''
+  /api/marketplace/opportunities/:
+    get:
+      operationId: marketplace_opportunities_list
+      description: |-
+        ViewSet for browsing marketplace opportunities.
+
+        Provides list and detail views with search and filtering.
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - marketplace
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMarketplaceOpportunityListList'
+          description: ''
+  /api/marketplace/opportunities/{id}/:
+    get:
+      operationId: marketplace_opportunities_retrieve
+      description: |-
+        ViewSet for browsing marketplace opportunities.
+
+        Provides list and detail views with search and filtering.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Marketplace Opportunity.
+        required: true
+      tags:
+      - marketplace
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketplaceOpportunityDetail'
+          description: ''
+  /api/marketplace/opportunities/{id}/bookmark/:
+    post:
+      operationId: marketplace_opportunities_bookmark_create
+      description: Bookmark an opportunity (add to watchlist).
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Marketplace Opportunity.
+        required: true
+      tags:
+      - marketplace
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOpportunityListRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOpportunityListRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOpportunityListRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketplaceOpportunityList'
+          description: ''
+  /api/marketplace/opportunities/{id}/remove_bookmark/:
+    delete:
+      operationId: marketplace_opportunities_remove_bookmark_destroy
+      description: Remove bookmark from an opportunity.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Marketplace Opportunity.
+        required: true
+      tags:
+      - marketplace
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/marketplace/opportunities/{id}/request_information/:
+    post:
+      operationId: marketplace_opportunities_request_information_create
+      description: |-
+        Request information about an opportunity.
+        Creates an investment interest record.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Marketplace Opportunity.
+        required: true
+      tags:
+      - marketplace
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOpportunityListRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOpportunityListRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOpportunityListRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketplaceOpportunityList'
+          description: ''
+  /api/marketplace/watchlist/:
+    get:
+      operationId: marketplace_watchlist_retrieve
+      description: Get user's watchlist.
+      tags:
+      - marketplace
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/portfolio/asset_allocation/:
+    get:
+      operationId: portfolio_asset_allocation_retrieve
+      description: Asset allocation with current vs target and rebalancing recommendations.
+      tags:
+      - portfolio
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/portfolio/overview/:
+    get:
+      operationId: portfolio_overview_retrieve
+      description: Portfolio overview with key metrics, sector performance, and individual
+        investments.
+      tags:
+      - portfolio
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/portfolio/performance_analysis/:
+    get:
+      operationId: portfolio_performance_analysis_retrieve
+      description: Performance analysis with historical data and risk-adjusted metrics.
+      tags:
+      - portfolio
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/portfolio/risk_metrics/:
+    get:
+      operationId: portfolio_risk_metrics_retrieve
+      description: Risk assessment with volatility, concentration, and stress testing.
+      tags:
+      - portfolio
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/transfers/:
+    get:
+      operationId: transfers_list
+      description: |-
+        ViewSet for managing ownership transfers.
+
+        Provides CRUD operations and status management for transfers.
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - transfers
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOwnershipTransferListList'
+          description: ''
+    post:
+      operationId: transfers_create
+      description: |-
+        ViewSet for managing ownership transfers.
+
+        Provides CRUD operations and status management for transfers.
+      tags:
+      - transfers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferCreate'
+          description: ''
+  /api/transfers/{id}/:
+    get:
+      operationId: transfers_retrieve
+      description: |-
+        ViewSet for managing ownership transfers.
+
+        Provides CRUD operations and status management for transfers.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - transfers
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferDetail'
+          description: ''
+    put:
+      operationId: transfers_update
+      description: |-
+        ViewSet for managing ownership transfers.
+
+        Provides CRUD operations and status management for transfers.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - transfers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferCreate'
+          description: ''
+    patch:
+      operationId: transfers_partial_update
+      description: |-
+        ViewSet for managing ownership transfers.
+
+        Provides CRUD operations and status management for transfers.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - transfers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedOwnershipTransferCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedOwnershipTransferCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedOwnershipTransferCreateRequest'
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferCreate'
+          description: ''
+    delete:
+      operationId: transfers_destroy
+      description: |-
+        ViewSet for managing ownership transfers.
+
+        Provides CRUD operations and status management for transfers.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - transfers
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/transfers/{id}/submit/:
+    post:
+      operationId: transfers_submit_create
+      description: |-
+        Submit a draft transfer for approval.
+        Changes status from DRAFT to PENDING.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - transfers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferListRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferListRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OwnershipTransferListRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferList'
+          description: ''
+  /api/transfers/history/:
+    get:
+      operationId: transfers_history_retrieve
+      description: Get transfer history (completed and cancelled transfers).
+      tags:
+      - transfers
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferList'
+          description: ''
+  /api/transfers/pending/:
+    get:
+      operationId: transfers_pending_retrieve
+      description: Get all pending transfers (both outgoing and incoming).
+      tags:
+      - transfers
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransferList'
+          description: ''
+components:
+  schemas:
+    ActivityTypeEnum:
+      enum:
+      - INITIAL_INVESTMENT
+      - CAPITAL_CALL
+      - DISTRIBUTION
+      - PARTIAL_EXIT
+      type: string
+      description: |-
+        * `INITIAL_INVESTMENT` - Initial Investment
+        * `CAPITAL_CALL` - Capital Call
+        * `DISTRIBUTION` - Distribution
+        * `PARTIAL_EXIT` - Partial Exit
+    CapitalActivity:
+      type: object
+      description: Serializer for capital activities.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        investment:
+          type: integer
+        activity_type:
+          $ref: '#/components/schemas/ActivityTypeEnum'
+        activity_type_display:
+          type: string
+          readOnly: true
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount (negative for calls/investments, positive for distributions)
+        date:
+          type: string
+          format: date
+          description: Activity date
+        details:
+          type: string
+          description: Activity description
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - activity_type
+      - activity_type_display
+      - amount
+      - created_at
+      - date
+      - id
+      - investment
+    CapitalActivityRequest:
+      type: object
+      description: Serializer for capital activities.
+      properties:
+        investment:
+          type: integer
+        activity_type:
+          $ref: '#/components/schemas/ActivityTypeEnum'
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount (negative for calls/investments, positive for distributions)
+        date:
+          type: string
+          format: date
+          description: Activity date
+        details:
+          type: string
+          description: Activity description
+      required:
+      - activity_type
+      - amount
+      - date
+      - investment
+    EmailVerificationRequest:
+      type: object
+      description: Serializer for email verification.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        otp_code:
+          type: string
+          minLength: 6
+          maxLength: 6
+      required:
+      - email
+      - otp_code
+    InvestmentCreateUpdate:
+      type: object
+      description: Serializer for creating/updating investments.
+      properties:
+        name:
+          type: string
+          description: Fund/Investment name
+          maxLength: 255
+        status:
+          $ref: '#/components/schemas/Status562Enum'
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        total_invested:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total amount invested
+        current_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Current valuation
+        fund_size:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          nullable: true
+          description: Total fund size (AUM)
+        unfunded_commitment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Remaining capital commitment
+        manager:
+          type: string
+          description: Fund manager name
+          maxLength: 255
+        investment_date:
+          type: string
+          format: date
+          description: Initial investment date
+        expected_horizon_years:
+          type: integer
+          maximum: 50
+          minimum: 1
+          nullable: true
+          description: Expected investment duration in years
+        fund_vintage:
+          type: integer
+          nullable: true
+          description: Fund vintage year
+        progress_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          description: Fund deployment progress
+      required:
+      - current_value
+      - investment_date
+      - name
+      - sector
+      - total_invested
+    InvestmentCreateUpdateRequest:
+      type: object
+      description: Serializer for creating/updating investments.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Fund/Investment name
+          maxLength: 255
+        status:
+          $ref: '#/components/schemas/Status562Enum'
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        total_invested:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total amount invested
+        current_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Current valuation
+        fund_size:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          nullable: true
+          description: Total fund size (AUM)
+        unfunded_commitment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Remaining capital commitment
+        manager:
+          type: string
+          description: Fund manager name
+          maxLength: 255
+        investment_date:
+          type: string
+          format: date
+          description: Initial investment date
+        expected_horizon_years:
+          type: integer
+          maximum: 50
+          minimum: 1
+          nullable: true
+          description: Expected investment duration in years
+        fund_vintage:
+          type: integer
+          nullable: true
+          description: Fund vintage year
+        progress_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          description: Fund deployment progress
+      required:
+      - current_value
+      - investment_date
+      - name
+      - sector
+      - total_invested
+    InvestmentDetail:
+      type: object
+      description: Serializer for investment detail view.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          description: Fund/Investment name
+          maxLength: 255
+        status:
+          $ref: '#/components/schemas/Status562Enum'
+        status_display:
+          type: string
+          readOnly: true
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        sector_display:
+          type: string
+          readOnly: true
+        total_invested:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total amount invested
+        current_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Current valuation
+        fund_size:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          nullable: true
+          description: Total fund size (AUM)
+        unfunded_commitment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Remaining capital commitment
+        manager:
+          type: string
+          description: Fund manager name
+          maxLength: 255
+        investment_date:
+          type: string
+          format: date
+          description: Initial investment date
+        expected_horizon_years:
+          type: integer
+          maximum: 50
+          minimum: 1
+          nullable: true
+          description: Expected investment duration in years
+        fund_vintage:
+          type: integer
+          nullable: true
+          description: Fund vintage year
+        progress_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          description: Fund deployment progress
+        unrealized_gain:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          readOnly: true
+        unrealized_gain_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+        moic:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+        irr:
+          type: string
+          readOnly: true
+        expected_end_date:
+          type: string
+          format: date
+          readOnly: true
+        capital_activities:
+          type: array
+          items:
+            $ref: '#/components/schemas/CapitalActivity'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - capital_activities
+      - created_at
+      - current_value
+      - expected_end_date
+      - id
+      - investment_date
+      - irr
+      - moic
+      - name
+      - sector
+      - sector_display
+      - status_display
+      - total_invested
+      - unrealized_gain
+      - unrealized_gain_percentage
+      - updated_at
+    InvestmentList:
+      type: object
+      description: Serializer for investment list view.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          description: Fund/Investment name
+          maxLength: 255
+        status:
+          $ref: '#/components/schemas/Status562Enum'
+        status_display:
+          type: string
+          readOnly: true
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        sector_display:
+          type: string
+          readOnly: true
+        current_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Current valuation
+        total_invested:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total amount invested
+        unrealized_gain:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          readOnly: true
+        unrealized_gain_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+        investment_date:
+          type: string
+          format: date
+          description: Initial investment date
+        moic:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+      required:
+      - current_value
+      - id
+      - investment_date
+      - moic
+      - name
+      - sector
+      - sector_display
+      - status_display
+      - total_invested
+      - unrealized_gain
+      - unrealized_gain_percentage
+    InvestmentTypeEnum:
+      enum:
+      - FIXED
+      - VARIABLE
+      type: string
+      description: |-
+        * `FIXED` - Fixed Investment
+        * `VARIABLE` - Variable Investment
+    LoginRequest:
+      type: object
+      description: Serializer for user login.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - email
+      - password
+    MarketplaceOpportunityDetail:
+      type: object
+      description: Serializer for marketplace opportunity detail view.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+          description: Investment opportunity name
+          maxLength: 255
+        description:
+          type: string
+          description: Short description
+        detailed_description:
+          type: string
+          description: Full investment memo
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        sector_display:
+          type: string
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/Status9faEnum'
+        status_display:
+          type: string
+          readOnly: true
+        min_investment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Minimum investment amount
+        target_raise_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total funding goal
+        current_raised_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount raised so far
+        target_irr:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Target IRR percentage
+        investment_term_years:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Investment duration in years
+        investment_type:
+          $ref: '#/components/schemas/InvestmentTypeEnum'
+        investment_type_display:
+          type: string
+          readOnly: true
+        risk_level:
+          $ref: '#/components/schemas/RiskLevelEnum'
+        risk_level_display:
+          type: string
+          readOnly: true
+        payout_frequency:
+          $ref: '#/components/schemas/PayoutFrequencyEnum'
+        payout_frequency_display:
+          type: string
+          readOnly: true
+        currency:
+          type: string
+          description: Currency code
+          maxLength: 10
+        rating:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,1})?$
+          description: Star rating (0-5)
+        investors_count:
+          type: integer
+          description: Number of investors
+        platform_rating:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,2}(?:\.\d{0,1})?$
+          nullable: true
+          description: Platform rating score
+        verification_type:
+          $ref: '#/components/schemas/VerificationTypeEnum'
+        verification_type_display:
+          type: string
+          readOnly: true
+        contact_phone:
+          type: string
+          maxLength: 20
+        contact_email:
+          type: string
+          format: email
+          maxLength: 254
+        location:
+          type: string
+          maxLength: 255
+        run_rate_sales_min:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          nullable: true
+          description: Minimum run rate sales
+        run_rate_sales_max:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          nullable: true
+          description: Maximum run rate sales
+        investment_requirements:
+          type: string
+          description: Investment criteria/requirements
+        disclaimer:
+          type: string
+          description: Legal disclaimer
+        funding_progress_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          readOnly: true
+        remaining_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          readOnly: true
+        is_featured:
+          type: boolean
+          description: Featured opportunity
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpportunityDocument'
+          readOnly: true
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpportunityTag'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - description
+      - documents
+      - funding_progress_percentage
+      - id
+      - investment_type_display
+      - min_investment
+      - payout_frequency_display
+      - remaining_amount
+      - risk_level_display
+      - sector
+      - sector_display
+      - status_display
+      - tags
+      - target_raise_amount
+      - title
+      - updated_at
+      - verification_type_display
+    MarketplaceOpportunityList:
+      type: object
+      description: Serializer for marketplace opportunity list view.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+          description: Investment opportunity name
+          maxLength: 255
+        description:
+          type: string
+          description: Short description
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        sector_display:
+          type: string
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/Status9faEnum'
+        status_display:
+          type: string
+          readOnly: true
+        min_investment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Minimum investment amount
+        target_raise_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total funding goal
+        current_raised_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount raised so far
+        target_irr:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Target IRR percentage
+        investment_term_years:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Investment duration in years
+        investment_type:
+          $ref: '#/components/schemas/InvestmentTypeEnum'
+        investment_type_display:
+          type: string
+          readOnly: true
+        rating:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,1})?$
+          description: Star rating (0-5)
+        investors_count:
+          type: integer
+          description: Number of investors
+        funding_progress_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          readOnly: true
+        remaining_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          readOnly: true
+        is_featured:
+          type: boolean
+          description: Featured opportunity
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpportunityTag'
+          readOnly: true
+      required:
+      - description
+      - funding_progress_percentage
+      - id
+      - investment_type_display
+      - min_investment
+      - remaining_amount
+      - sector
+      - sector_display
+      - status_display
+      - tags
+      - target_raise_amount
+      - title
+    MarketplaceOpportunityListRequest:
+      type: object
+      description: Serializer for marketplace opportunity list view.
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: Investment opportunity name
+          maxLength: 255
+        description:
+          type: string
+          minLength: 1
+          description: Short description
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        status:
+          $ref: '#/components/schemas/Status9faEnum'
+        min_investment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Minimum investment amount
+        target_raise_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total funding goal
+        current_raised_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount raised so far
+        target_irr:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Target IRR percentage
+        investment_term_years:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Investment duration in years
+        investment_type:
+          $ref: '#/components/schemas/InvestmentTypeEnum'
+        rating:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,1})?$
+          description: Star rating (0-5)
+        investors_count:
+          type: integer
+          description: Number of investors
+        is_featured:
+          type: boolean
+          description: Featured opportunity
+      required:
+      - description
+      - min_investment
+      - sector
+      - target_raise_amount
+      - title
+    OpportunityDocument:
+      type: object
+      description: Serializer for opportunity documents.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+          description: Document name
+          maxLength: 255
+        file:
+          type: string
+          format: uri
+          description: Document file
+        file_url:
+          type: string
+          readOnly: true
+        document_type:
+          $ref: '#/components/schemas/OpportunityDocumentDocumentTypeEnum'
+        document_type_display:
+          type: string
+          readOnly: true
+        uploaded_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - document_type_display
+      - file
+      - file_url
+      - id
+      - title
+      - uploaded_at
+    OpportunityDocumentDocumentTypeEnum:
+      enum:
+      - MEMO
+      - RATING
+      - PROSPECTUS
+      - FINANCIAL
+      - OTHER
+      type: string
+      description: |-
+        * `MEMO` - Investment Memo
+        * `RATING` - DataPro Rating
+        * `PROSPECTUS` - Prospectus
+        * `FINANCIAL` - Financial Statement
+        * `OTHER` - Other
+    OpportunityTag:
+      type: object
+      description: Serializer for opportunity tags.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        tag_name:
+          type: string
+          description: Tag text
+          maxLength: 100
+        tag_type:
+          $ref: '#/components/schemas/TagTypeEnum'
+        tag_type_display:
+          type: string
+          readOnly: true
+      required:
+      - id
+      - tag_name
+      - tag_type_display
+    OpportunityTagRequest:
+      type: object
+      description: Serializer for opportunity tags.
+      properties:
+        tag_name:
+          type: string
+          minLength: 1
+          description: Tag text
+          maxLength: 100
+        tag_type:
+          $ref: '#/components/schemas/TagTypeEnum'
+      required:
+      - tag_name
+    OtpTypeEnum:
+      enum:
+      - EMAIL_VERIFICATION
+      - PASSWORD_RESET
+      type: string
+      description: |-
+        * `EMAIL_VERIFICATION` - EMAIL_VERIFICATION
+        * `PASSWORD_RESET` - PASSWORD_RESET
+    OwnershipTransferCreate:
+      type: object
+      description: Serializer for creating ownership transfers.
+      properties:
+        investment:
+          type: integer
+        to_user:
+          type: integer
+          nullable: true
+          description: Recipient user (if registered)
+        to_email:
+          type: string
+          format: email
+          description: Recipient email (for external recipients)
+          maxLength: 254
+        to_name:
+          type: string
+          description: Recipient name/entity
+          maxLength: 255
+        transfer_type:
+          $ref: '#/components/schemas/TransferTypeEnum'
+        percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Percentage of ownership to transfer (for partial transfers)
+        transfer_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount being transferred
+        reason:
+          type: string
+          description: Reason for transfer (required for compliance)
+        status:
+          $ref: '#/components/schemas/Status7caEnum'
+      required:
+      - investment
+      - reason
+      - transfer_amount
+      - transfer_type
+    OwnershipTransferCreateRequest:
+      type: object
+      description: Serializer for creating ownership transfers.
+      properties:
+        investment:
+          type: integer
+        to_user:
+          type: integer
+          nullable: true
+          description: Recipient user (if registered)
+        to_email:
+          type: string
+          format: email
+          description: Recipient email (for external recipients)
+          maxLength: 254
+        to_name:
+          type: string
+          description: Recipient name/entity
+          maxLength: 255
+        transfer_type:
+          $ref: '#/components/schemas/TransferTypeEnum'
+        percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Percentage of ownership to transfer (for partial transfers)
+        transfer_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount being transferred
+        reason:
+          type: string
+          minLength: 1
+          description: Reason for transfer (required for compliance)
+        status:
+          $ref: '#/components/schemas/Status7caEnum'
+      required:
+      - investment
+      - reason
+      - transfer_amount
+      - transfer_type
+    OwnershipTransferDetail:
+      type: object
+      description: Serializer for ownership transfer detail view.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        investment:
+          type: integer
+        investment_name:
+          type: string
+          readOnly: true
+        from_user:
+          type: integer
+          readOnly: true
+          description: User transferring ownership
+        from_user_email:
+          type: string
+          readOnly: true
+        to_user:
+          type: integer
+          nullable: true
+          description: Recipient user (if registered)
+        to_user_email:
+          type: string
+          readOnly: true
+          nullable: true
+        to_email:
+          type: string
+          format: email
+          description: Recipient email (for external recipients)
+          maxLength: 254
+        to_name:
+          type: string
+          description: Recipient name/entity
+          maxLength: 255
+        recipient:
+          type: string
+          readOnly: true
+        transfer_type:
+          $ref: '#/components/schemas/TransferTypeEnum'
+        transfer_type_display:
+          type: string
+          readOnly: true
+        percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Percentage of ownership to transfer (for partial transfers)
+        transfer_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount being transferred
+        transfer_fee:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          readOnly: true
+          description: Transfer fee (2.5%)
+        net_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          readOnly: true
+          description: Amount recipient receives after fees
+        reason:
+          type: string
+          description: Reason for transfer (required for compliance)
+        status:
+          $ref: '#/components/schemas/Status7caEnum'
+        status_display:
+          type: string
+          readOnly: true
+        initiated_date:
+          type: string
+          format: date-time
+          readOnly: true
+        completion_date:
+          type: string
+          format: date-time
+          nullable: true
+        estimated_completion_date:
+          type: string
+          format: date-time
+          nullable: true
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransferDocument'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - documents
+      - from_user
+      - from_user_email
+      - id
+      - initiated_date
+      - investment
+      - investment_name
+      - net_amount
+      - reason
+      - recipient
+      - status_display
+      - to_user_email
+      - transfer_amount
+      - transfer_fee
+      - transfer_type
+      - transfer_type_display
+      - updated_at
+    OwnershipTransferList:
+      type: object
+      description: Serializer for ownership transfer list view.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        investment:
+          type: integer
+        investment_name:
+          type: string
+          readOnly: true
+        from_user_email:
+          type: string
+          readOnly: true
+        to_user_email:
+          type: string
+          readOnly: true
+          nullable: true
+        recipient:
+          type: string
+          readOnly: true
+        to_name:
+          type: string
+          description: Recipient name/entity
+          maxLength: 255
+        transfer_type:
+          $ref: '#/components/schemas/TransferTypeEnum'
+        transfer_type_display:
+          type: string
+          readOnly: true
+        percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Percentage of ownership to transfer (for partial transfers)
+        transfer_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount being transferred
+        transfer_fee:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Transfer fee (2.5%)
+        net_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount recipient receives after fees
+        status:
+          $ref: '#/components/schemas/Status7caEnum'
+        status_display:
+          type: string
+          readOnly: true
+        initiated_date:
+          type: string
+          format: date-time
+          readOnly: true
+        estimated_completion_date:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - from_user_email
+      - id
+      - initiated_date
+      - investment
+      - investment_name
+      - recipient
+      - status_display
+      - to_user_email
+      - transfer_amount
+      - transfer_type
+      - transfer_type_display
+    OwnershipTransferListRequest:
+      type: object
+      description: Serializer for ownership transfer list view.
+      properties:
+        investment:
+          type: integer
+        to_name:
+          type: string
+          description: Recipient name/entity
+          maxLength: 255
+        transfer_type:
+          $ref: '#/components/schemas/TransferTypeEnum'
+        percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Percentage of ownership to transfer (for partial transfers)
+        transfer_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount being transferred
+        transfer_fee:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Transfer fee (2.5%)
+        net_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount recipient receives after fees
+        status:
+          $ref: '#/components/schemas/Status7caEnum'
+        estimated_completion_date:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - investment
+      - transfer_amount
+      - transfer_type
+    PaginatedCapitalActivityList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/CapitalActivity'
+    PaginatedInvestmentListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvestmentList'
+    PaginatedMarketplaceOpportunityListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketplaceOpportunityList'
+    PaginatedOwnershipTransferListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/OwnershipTransferList'
+    PasswordResetConfirmRequest:
+      type: object
+      description: Serializer for confirming password reset.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        otp_code:
+          type: string
+          minLength: 6
+          maxLength: 6
+        new_password:
+          type: string
+          writeOnly: true
+          minLength: 1
+        new_password_confirm:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - email
+      - new_password
+      - new_password_confirm
+      - otp_code
+    PasswordResetRequestRequest:
+      type: object
+      description: Serializer for password reset request.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+      required:
+      - email
+    PasswordResetVerifyRequest:
+      type: object
+      description: Serializer for verifying password reset OTP.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        otp_code:
+          type: string
+          minLength: 6
+          maxLength: 6
+      required:
+      - email
+      - otp_code
+    PatchedCapitalActivityRequest:
+      type: object
+      description: Serializer for capital activities.
+      properties:
+        investment:
+          type: integer
+        activity_type:
+          $ref: '#/components/schemas/ActivityTypeEnum'
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount (negative for calls/investments, positive for distributions)
+        date:
+          type: string
+          format: date
+          description: Activity date
+        details:
+          type: string
+          description: Activity description
+    PatchedInvestmentCreateUpdateRequest:
+      type: object
+      description: Serializer for creating/updating investments.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Fund/Investment name
+          maxLength: 255
+        status:
+          $ref: '#/components/schemas/Status562Enum'
+        sector:
+          $ref: '#/components/schemas/SectorEnum'
+        total_invested:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Total amount invested
+        current_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Current valuation
+        fund_size:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          nullable: true
+          description: Total fund size (AUM)
+        unfunded_commitment:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Remaining capital commitment
+        manager:
+          type: string
+          description: Fund manager name
+          maxLength: 255
+        investment_date:
+          type: string
+          format: date
+          description: Initial investment date
+        expected_horizon_years:
+          type: integer
+          maximum: 50
+          minimum: 1
+          nullable: true
+          description: Expected investment duration in years
+        fund_vintage:
+          type: integer
+          nullable: true
+          description: Fund vintage year
+        progress_percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          description: Fund deployment progress
+    PatchedOwnershipTransferCreateRequest:
+      type: object
+      description: Serializer for creating ownership transfers.
+      properties:
+        investment:
+          type: integer
+        to_user:
+          type: integer
+          nullable: true
+          description: Recipient user (if registered)
+        to_email:
+          type: string
+          format: email
+          description: Recipient email (for external recipients)
+          maxLength: 254
+        to_name:
+          type: string
+          description: Recipient name/entity
+          maxLength: 255
+        transfer_type:
+          $ref: '#/components/schemas/TransferTypeEnum'
+        percentage:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          nullable: true
+          description: Percentage of ownership to transfer (for partial transfers)
+        transfer_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,13}(?:\.\d{0,2})?$
+          description: Amount being transferred
+        reason:
+          type: string
+          minLength: 1
+          description: Reason for transfer (required for compliance)
+        status:
+          $ref: '#/components/schemas/Status7caEnum'
+    PatchedUserRequest:
+      type: object
+      description: Serializer for user profile.
+      properties:
+        username:
+          type: string
+          nullable: true
+          maxLength: 150
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 150
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 150
+    PayoutFrequencyEnum:
+      enum:
+      - MONTHLY
+      - QUARTERLY
+      - ANNUALLY
+      type: string
+      description: |-
+        * `MONTHLY` - Monthly
+        * `QUARTERLY` - Quarterly
+        * `ANNUALLY` - Annually
+    ResendOTPRequest:
+      type: object
+      description: Serializer for resending OTP.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        otp_type:
+          $ref: '#/components/schemas/OtpTypeEnum'
+      required:
+      - email
+      - otp_type
+    RiskLevelEnum:
+      enum:
+      - LOW
+      - MEDIUM
+      - HIGH
+      type: string
+      description: |-
+        * `LOW` - Low
+        * `MEDIUM` - Medium
+        * `HIGH` - High
+    SectorEnum:
+      enum:
+      - TECHNOLOGY
+      - HEALTHCARE
+      - REAL_ESTATE
+      - FINTECH
+      - AGRICULTURE
+      - ENERGY
+      - CONSUMER
+      - INDUSTRIAL
+      - OTHER
+      type: string
+      description: |-
+        * `TECHNOLOGY` - Technology
+        * `HEALTHCARE` - Healthcare
+        * `REAL_ESTATE` - Real Estate
+        * `FINTECH` - FinTech
+        * `AGRICULTURE` - Agriculture
+        * `ENERGY` - Energy
+        * `CONSUMER` - Consumer
+        * `INDUSTRIAL` - Industrial
+        * `OTHER` - Other
+    Status562Enum:
+      enum:
+      - ACTIVE
+      - UNDERPERFORMING
+      - EXITED
+      type: string
+      description: |-
+        * `ACTIVE` - Active
+        * `UNDERPERFORMING` - Underperforming
+        * `EXITED` - Exited
+    Status7caEnum:
+      enum:
+      - DRAFT
+      - PENDING
+      - APPROVED
+      - COMPLETED
+      - CANCELLED
+      - REJECTED
+      type: string
+      description: |-
+        * `DRAFT` - Draft
+        * `PENDING` - Pending Approval
+        * `APPROVED` - Approved
+        * `COMPLETED` - Completed
+        * `CANCELLED` - Cancelled
+        * `REJECTED` - Rejected
+    Status9faEnum:
+      enum:
+      - NEW
+      - ACTIVE
+      - CLOSING_SOON
+      - CLOSED
+      type: string
+      description: |-
+        * `NEW` - New
+        * `ACTIVE` - Active
+        * `CLOSING_SOON` - Closing Soon
+        * `CLOSED` - Closed
+    TagTypeEnum:
+      enum:
+      - INDUSTRY
+      - FEATURE
+      - STATUS
+      - OTHER
+      type: string
+      description: |-
+        * `INDUSTRY` - Industry
+        * `FEATURE` - Feature
+        * `STATUS` - Status
+        * `OTHER` - Other
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          minLength: 1
+      required:
+      - refresh
+    TransferDocument:
+      type: object
+      description: Serializer for transfer documents.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        document_type:
+          $ref: '#/components/schemas/TransferDocumentDocumentTypeEnum'
+        document_type_display:
+          type: string
+          readOnly: true
+        file:
+          type: string
+          format: uri
+          description: Document file
+        file_url:
+          type: string
+          readOnly: true
+        uploaded_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - document_type_display
+      - file
+      - file_url
+      - id
+      - uploaded_at
+    TransferDocumentDocumentTypeEnum:
+      enum:
+      - RECEIPT
+      - AGREEMENT
+      - COMPLIANCE
+      - OTHER
+      type: string
+      description: |-
+        * `RECEIPT` - Transfer Receipt
+        * `AGREEMENT` - Transfer Agreement
+        * `COMPLIANCE` - Compliance Document
+        * `OTHER` - Other
+    TransferTypeEnum:
+      enum:
+      - FULL
+      - PARTIAL
+      type: string
+      description: |-
+        * `FULL` - Full Transfer
+        * `PARTIAL` - Partial Transfer
+    User:
+      type: object
+      description: Serializer for user profile.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        username:
+          type: string
+          nullable: true
+          maxLength: 150
+        first_name:
+          type: string
+          maxLength: 150
+        last_name:
+          type: string
+          maxLength: 150
+        full_name:
+          type: string
+          readOnly: true
+        is_email_verified:
+          type: boolean
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - email
+      - first_name
+      - full_name
+      - id
+      - is_email_verified
+      - last_name
+      - updated_at
+    UserRegistrationRequest:
+      type: object
+      description: Serializer for user registration.
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 150
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 150
+        username:
+          type: string
+          nullable: true
+          maxLength: 150
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password_confirm:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - email
+      - first_name
+      - last_name
+      - password
+      - password_confirm
+    UserRequest:
+      type: object
+      description: Serializer for user profile.
+      properties:
+        username:
+          type: string
+          nullable: true
+          maxLength: 150
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 150
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 150
+      required:
+      - first_name
+      - last_name
+    VerificationTypeEnum:
+      enum:
+      - VERIFIED
+      - PENDING
+      - UNVERIFIED
+      type: string
+      description: |-
+        * `VERIFIED` - Verified
+        * `PENDING` - Pending
+        * `UNVERIFIED` - Unverified
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+tags:
+- name: Authentication
+  description: User registration, login, email verification, password reset
+- name: Portfolio
+  description: Investment management and capital activities
+- name: Analytics
+  description: Portfolio analytics and performance metrics
+- name: Marketplace
+  description: Investment opportunities and watchlist
+- name: Transfers
+  description: Ownership transfer management
+- name: Account
+  description: User profile, security, and preferences
+- name: Network
+  description: Investor network and connections
