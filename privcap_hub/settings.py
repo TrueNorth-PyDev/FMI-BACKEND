@@ -262,6 +262,9 @@ OTP_LENGTH = 6
 
 
 # Logging Configuration
+# In production (Railway), use console logging only (Railway captures logs)
+# In development, use both file and console logging
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -276,46 +279,40 @@ LOGGING = {
         },
     },
     'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'privcap_hub.log'),
-            'maxBytes': 1024 * 1024 * 15,  # 15MB
-            'backupCount': 10,
-            'formatter': 'verbose',
-        },
         'console': {
             'level': 'DEBUG',
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
         },
-        'security_file': {
-            'level': 'WARNING',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'security.log'),
-            'maxBytes': 1024 * 1024 * 10,  # 10MB
-            'backupCount': 10,
-            'formatter': 'verbose',
-        },
     },
     'loggers': {
         'accounts': {
-            'handlers': ['file', 'console'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
         'core': {
-            'handlers': ['file', 'console'],
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'investments': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'marketplace': {
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
         'django.security': {
-            'handlers': ['security_file', 'console'],
+            'handlers': ['console'],
             'level': 'WARNING',
             'propagate': False,
         },
         'security': {
-            'handlers': ['security_file', 'console'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
@@ -325,6 +322,37 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Add file logging only in development
+if DEBUG:
+    # Create logs directory if it doesn't exist
+    LOGS_DIR = BASE_DIR / 'logs'
+    LOGS_DIR.mkdir(exist_ok=True)
+    
+    # Add file handlers
+    LOGGING['handlers']['file'] = {
+        'level': 'INFO',
+        'class': 'logging.handlers.RotatingFileHandler',
+        'filename': LOGS_DIR / 'privcap_hub.log',
+        'maxBytes': 1024 * 1024 * 15,  # 15MB
+        'backupCount': 10,
+        'formatter': 'verbose',
+    }
+    LOGGING['handlers']['security_file'] = {
+        'level': 'WARNING',
+        'class': 'logging.handlers.RotatingFileHandler',
+        'filename': LOGS_DIR / 'security.log',
+        'maxBytes': 1024 * 1024 * 10,  # 10MB
+        'backupCount': 10,
+        'formatter': 'verbose',
+    }
+    
+    # Update loggers to use file handlers in development
+    for logger_name in ['accounts', 'core', 'investments', 'marketplace']:
+        LOGGING['loggers'][logger_name]['handlers'] = ['file', 'console']
+    
+    LOGGING['loggers']['django.security']['handlers'] = ['security_file', 'console']
+    LOGGING['loggers']['security']['handlers'] = ['security_file', 'console']
 
 
 # DRF Spectacular Settings for API Documentation
