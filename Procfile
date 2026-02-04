@@ -1,2 +1,2 @@
-web: gunicorn privcap_hub.wsgi --log-file -
-release: python manage.py collectstatic --noinput && python manage.py migrate --noinput
+web: gunicorn privcap_hub.wsgi --bind 0.0.0.0:$PORT --log-file -
+
