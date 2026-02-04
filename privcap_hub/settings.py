@@ -223,7 +223,21 @@ SIMPLE_JWT = {
 
 
 # CORS Configuration
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
+CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:8080',
+])
+
+# CSRF Configuration
+# Add Railway domain and CORS origins to trusted origins for CSRF protection
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+# In production, automatically add ALLOWED_HOSTS to CSRF_TRUSTED_ORIGINS
+if not DEBUG:
+    # Add https:// prefix to all allowed hosts for CSRF
+    CSRF_TRUSTED_ORIGINS.extend([f'https://{host}' for host in ALLOWED_HOSTS if host not in ['localhost', '127.0.0.1']])
+    # Also add CORS origins
+    CSRF_TRUSTED_ORIGINS.extend(CORS_ALLOWED_ORIGINS)
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
