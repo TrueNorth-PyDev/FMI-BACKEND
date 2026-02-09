@@ -20,6 +20,7 @@ class CapitalActivitySerializer(serializers.ModelSerializer):
         fields = ['id', 'investment', 'activity_type', 'activity_type_display', 
                   'amount', 'date', 'details', 'created_at']
         read_only_fields = ['id', 'created_at']
+        depth = 1
     
     def validate_amount(self, value):
         """Validate amount based on activity type."""
@@ -44,6 +45,7 @@ class PerformanceSnapshotSerializer(serializers.ModelSerializer):
         model = PerformanceSnapshot
         fields = ['id', 'investment', 'date', 'value', 'created_at']
         read_only_fields = ['id', 'created_at']
+        depth = 1
 
 
 class InvestmentListSerializer(serializers.ModelSerializer):
