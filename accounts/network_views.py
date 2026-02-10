@@ -282,7 +282,6 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
             recent.append({
                 'name': inv.name,
                 'sector': inv.get_sector_display(),
-                'type': inv.get_investment_type_display(),
                 'invested': float(inv.total_invested),
                 'current_value': float(inv.current_value),
                 'performance': float(inv.unrealized_gain_percentage),
