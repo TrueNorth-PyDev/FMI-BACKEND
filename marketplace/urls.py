@@ -15,7 +15,6 @@ router.register(r'opportunities', MarketplaceOpportunityViewSet, basename='oppor
 router.register(r'watchlist', WatchlistViewSet, basename='watchlist')
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
 def debug_media_config(request):
     """Debug endpoint to check media configuration"""
     media_root = Path(settings.MEDIA_ROOT)
