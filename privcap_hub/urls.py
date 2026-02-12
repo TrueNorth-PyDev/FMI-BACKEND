@@ -25,10 +25,13 @@ urlpatterns = [
     path('api/marketplace/', include('marketplace.urls')),
 ]
 
-# Serve media files (both development and production)
-# NOTE: In production, ideally use cloud storage (S3, Cloudinary, etc.)
-# This is a temporary solution for Railway's ephemeral filesystem
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve media files using custom view (works in production with WSGI)
+from django.urls import re_path
+from core.media_views import serve_media
+
+urlpatterns += [
+    re_path(r'^media/(?P<path>.*)$', serve_media, name='media'),
+]
 
 # Serve static files only in development (production uses WhiteNoise)
 if settings.DEBUG:
