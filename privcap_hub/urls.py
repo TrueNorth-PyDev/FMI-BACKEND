@@ -25,7 +25,11 @@ urlpatterns = [
     path('api/marketplace/', include('marketplace.urls')),
 ]
 
-# Serve media files in development
+# Serve media files (both development and production)
+# NOTE: In production, ideally use cloud storage (S3, Cloudinary, etc.)
+# This is a temporary solution for Railway's ephemeral filesystem
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve static files only in development (production uses WhiteNoise)
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
