@@ -5,15 +5,15 @@ from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipT
 @admin.register(Investment)
 class InvestmentAdmin(admin.ModelAdmin):
     """Admin interface for Investment model."""
-    list_display = ['name', 'user', 'status', 'sector', 'current_value', 'total_invested', 
+    list_display = ['name', 'opportunity', 'user', 'status', 'sector', 'current_value', 'total_invested', 
                     'unrealized_gain_percentage', 'investment_date']
     list_filter = ['status', 'sector', 'investment_date']
-    search_fields = ['name', 'user__email', 'manager']
+    search_fields = ['name', 'opportunity__title', 'user__email', 'manager']
     readonly_fields = ['created_at', 'updated_at', 'unrealized_gain', 'unrealized_gain_percentage', 'moic']
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('user', 'name', 'status', 'sector')
+            'fields': ('user', 'opportunity', 'name', 'status', 'sector')
         }),
         ('Financial Details', {
             'fields': ('total_invested', 'current_value', 'fund_size', 'unfunded_commitment')
