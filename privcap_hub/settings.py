@@ -164,8 +164,15 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # to avoid errors when manifest is missing
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
+# Media files configuration
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+
+# Use Railway volume mount in production, local directory in development
+if DEBUG:
+    MEDIA_ROOT = BASE_DIR / 'media'
+else:
+    # Railway volume is mounted to /app/media
+    MEDIA_ROOT = '/app/media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
