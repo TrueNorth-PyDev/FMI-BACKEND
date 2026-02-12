@@ -56,7 +56,7 @@ def calculate_investment_irr(investment):
         return Decimal('0.00')
         
     except Exception as e:
-        logger.error(f"Error calculating IRR for {investment.name}: {str(e)}")
+        logger.error(f"Error calculating IRR for {investment.get_name()}: {str(e)}")
         return Decimal('0.00')
 
 
@@ -124,12 +124,13 @@ def calculate_portfolio_metrics(user):
     unrealized_gains = total_value - total_invested
     unrealized_gains_percentage = (unrealized_gains / total_invested * 100) if total_invested > 0 else Decimal('0.00')
     
-    # Calculate weighted average IRR
+    # Calculate weighted average IRR using target_irr from opportunities
     irr_values = []
     weights = []
     
     for investment in investments:
-        irr = investment.calculate_irr()
+        # Use target IRR from opportunity if available
+        irr = investment.target_irr
         if irr is not None and irr != Decimal('0.00'):
             irr_values.append(float(irr))
             weights.append(float(investment.total_invested))
@@ -463,7 +464,7 @@ def get_distribution_history(user):
         history.append({
             'id': dist.id,
             'investment_id': dist.investment.id,
-            'investment_name': dist.investment.name,
+            'investment_name': dist.investment.get_name(),
             'amount': dist.amount,
             'date': dist.date,
             'details': dist.details,

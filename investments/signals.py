@@ -34,7 +34,7 @@ def create_performance_snapshot(sender, instance, created, **kwargs):
                 date=today,
                 value=instance.current_value
             )
-            logger.info(f"Performance snapshot created for {instance.name}: ${instance.current_value}")
+            logger.info(f"Performance snapshot created for {instance.get_name()}: ${instance.current_value}")
 
 
 @receiver(post_save, sender=OwnershipTransfer)
@@ -102,9 +102,10 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
             # 2. Create/Update Buyer's Investment
             buyer_investment, created_inv = Investment.objects.get_or_create(
                 user=buyer,
-                name=seller_investment.name,
+                opportunity=seller_investment.opportunity,  # Link to same opportunity
+                name=seller_investment.name or seller_investment.get_name(),  # Use legacy name if exists
                 defaults={
-                    'sector': seller_investment.sector,
+                    'sector': seller_investment.sector or seller_investment.get_sector(),  # Use legacy sector
                     'status': 'ACTIVE',
                     'total_invested': Decimal('0.00'),
                     'current_value': Decimal('0.00'),

@@ -81,16 +81,16 @@ class InvestmentViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Create investment for current user."""
         investment = serializer.save()
-        logger.info(f"Investment created: {investment.name} by {self.request.user.email}")
+        logger.info(f"Investment created: {investment.get_name()} by {self.request.user.email}")
     
     def perform_update(self, serializer):
         """Update investment."""
         investment = serializer.save()
-        logger.info(f"Investment updated: {investment.name} by {self.request.user.email}")
+        logger.info(f"Investment updated: {investment.get_name()} by {self.request.user.email}")
     
     def perform_destroy(self, instance):
         """Delete investment."""
-        logger.info(f"Investment deleted: {instance.name} by {self.request.user.email}")
+        logger.info(f"Investment deleted: {instance.get_name()} by {self.request.user.email}")
         instance.delete()
     
     @action(detail=True, methods=['get'])
@@ -107,7 +107,7 @@ class InvestmentViewSet(viewsets.ModelViewSet):
         
         return Response({
             'investment_id': investment.id,
-            'investment_name': investment.name,
+            'investment_name': investment.get_name(),
             'period_days': days,
             'data': serializer.data
         })
@@ -143,7 +143,7 @@ class CapitalActivityViewSet(viewsets.ModelViewSet):
         """Create capital activity."""
         activity = serializer.save()
         logger.info(
-            f"Capital activity created: {activity.activity_type} for {activity.investment.name}, "
+            f"Capital activity created: {activity.activity_type} for {activity.investment.get_name()}, "
             f"Amount: ${activity.amount}"
         )
 
@@ -174,7 +174,7 @@ class PortfolioAnalyticsViewSet(viewsets.ViewSet):
         
         for inv in investments:
             investment_performance.append({
-                'name': inv.name,
+                'name': inv.get_name(),
                 'value': float(inv.current_value),
                 'percentage': float((inv.current_value / metrics['total_value'] * 100) if metrics['total_value'] > 0 else 0),
                 'return_percentage': float(inv.unrealized_gain_percentage)

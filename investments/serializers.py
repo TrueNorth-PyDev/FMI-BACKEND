@@ -50,29 +50,42 @@ class PerformanceSnapshotSerializer(serializers.ModelSerializer):
 
 class InvestmentListSerializer(serializers.ModelSerializer):
     """Serializer for investment list view."""
+    name = serializers.SerializerMethodField()
+    sector = serializers.SerializerMethodField()
     sector_display = serializers.CharField(source='get_sector_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     unrealized_gain = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     unrealized_gain_percentage = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     moic = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    opportunity_id = serializers.IntegerField(source='opportunity.id', read_only=True, allow_null=True)
     
     class Meta:
         model = Investment
         fields = ['id', 'name', 'status', 'status_display', 'sector', 'sector_display',
                   'current_value', 'total_invested', 'unrealized_gain', 
-                  'unrealized_gain_percentage', 'investment_date', 'moic']
+                  'unrealized_gain_percentage', 'investment_date', 'moic', 'opportunity_id']
+    
+    def get_name(self, obj):
+        return obj.get_name()
+    
+    def get_sector(self, obj):
+        return obj.get_sector()
 
 
 class InvestmentDetailSerializer(serializers.ModelSerializer):
     """Serializer for investment detail view."""
+    name = serializers.SerializerMethodField()
+    sector = serializers.SerializerMethodField()
     sector_display = serializers.CharField(source='get_sector_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     unrealized_gain = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     unrealized_gain_percentage = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     moic = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     expected_end_date = serializers.DateField(read_only=True)
-    irr = serializers.SerializerMethodField()
+    calculated_irr = serializers.SerializerMethodField()
+    target_irr = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
     capital_activities = CapitalActivitySerializer(many=True, read_only=True)
+    opportunity_id = serializers.IntegerField(source='opportunity.id', read_only=True, allow_null=True)
     
     class Meta:
         model = Investment
@@ -80,12 +93,18 @@ class InvestmentDetailSerializer(serializers.ModelSerializer):
                   'total_invested', 'current_value', 'fund_size', 'unfunded_commitment',
                   'manager', 'investment_date', 'expected_horizon_years', 'fund_vintage',
                   'progress_percentage', 'unrealized_gain', 'unrealized_gain_percentage',
-                  'moic', 'irr', 'expected_end_date', 'capital_activities', 
-                  'created_at', 'updated_at']
+                  'moic', 'calculated_irr', 'target_irr', 'expected_end_date', 'capital_activities', 
+                  'opportunity_id', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_irr(self, obj):
-        """Calculate and return IRR."""
+    def get_name(self, obj):
+        return obj.get_name()
+    
+    def get_sector(self, obj):
+        return obj.get_sector()
+    
+    def get_calculated_irr(self, obj):
+        """Calculate and return IRR from capital activities."""
         try:
             irr = obj.calculate_irr()
             return float(irr) if irr else 0.0
@@ -98,9 +117,12 @@ class InvestmentCreateUpdateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Investment
-        fields = ['name', 'status', 'sector', 'total_invested', 'current_value',
+        fields = ['opportunity', 'name', 'status', 'sector', 'total_invested', 'current_value',
                   'fund_size', 'unfunded_commitment', 'manager', 'investment_date',
                   'expected_horizon_years', 'fund_vintage', 'progress_percentage']
+        extra_kwargs = {
+            'opportunity': {'required': False, 'allow_null': True}
+        }
     
     def validate(self, attrs):
         """Validate investment data."""
@@ -123,7 +145,7 @@ class InvestmentCreateUpdateSerializer(serializers.ModelSerializer):
         """Create investment with user from context."""
         validated_data['user'] = self.context['request'].user
         investment = Investment.objects.create(**validated_data)
-        logger.info(f"Investment created: {investment.name} by {investment.user.email}")
+        logger.info(f"Investment created: {investment.get_name()} by {investment.user.email}")
         return investment
 
 

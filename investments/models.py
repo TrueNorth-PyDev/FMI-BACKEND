@@ -11,6 +11,7 @@ logger = logging.getLogger('investments')
 class Investment(models.Model):
     """
     Represents a private equity investment/fund in the user's portfolio.
+    Linked to a MarketplaceOpportunity to derive name, sector, and IRR.
     """
     STATUS_CHOICES = [
         ('ACTIVE', 'Active'),
@@ -31,9 +32,22 @@ class Investment(models.Model):
     ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='investments')
-    name = models.CharField(max_length=255, help_text="Fund/Investment name")
+    
+    # Link to marketplace opportunity
+    opportunity = models.ForeignKey(
+        'marketplace.MarketplaceOpportunity',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='investments',
+        help_text="Marketplace opportunity this investment is based on"
+    )
+    
+    # Legacy fields - kept for backward compatibility
+    # New investments should use opportunity.title and opportunity.sector instead
+    name = models.CharField(max_length=255, blank=True, null=True, help_text="Fund/Investment name (deprecated, use opportunity.title)")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
-    sector = models.CharField(max_length=20, choices=SECTOR_CHOICES)
+    sector = models.CharField(max_length=20, choices=SECTOR_CHOICES, blank=True, null=True, help_text="Investment sector (deprecated, use opportunity.sector)")
     
     # Financial details
     total_invested = models.DecimalField(
@@ -103,7 +117,35 @@ class Investment(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.name} - {self.user.email}"
+        return f"{self.get_name()} - {self.user.email}"
+    
+    def get_name(self):
+        """Get investment name from opportunity title or legacy name field."""
+        if self.opportunity:
+            return self.opportunity.title
+        return self.name or "Unnamed Investment"
+    
+    def get_sector(self):
+        """Get sector from opportunity or legacy sector field."""
+        if self.opportunity:
+            return self.opportunity.sector
+        return self.sector or "OTHER"
+    
+    def get_sector_display(self):
+        """Get human-readable sector from opportunity or legacy field."""
+        sector = self.get_sector()
+        # Find the display name from SECTOR_CHOICES
+        for choice_value, choice_display in self.SECTOR_CHOICES:
+            if choice_value == sector:
+                return choice_display
+        return sector
+    
+    @property
+    def target_irr(self):
+        """Get target IRR from opportunity."""
+        if self.opportunity:
+            return self.opportunity.target_irr
+        return None
     
     @property
     def unrealized_gain(self):

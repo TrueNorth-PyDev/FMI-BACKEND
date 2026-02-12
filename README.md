@@ -15,6 +15,9 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 
 ### 📊 Portfolio Management
 - **Investment Tracking**: Monitor private equity, VC, and real estate investments
+- **Opportunity Integration**: Link investments to marketplace opportunities for automatic data synchronization
+- **Daily IRR Accrual**: Automatic daily growth of investment values based on target IRR (compound interest)
+- **Dual IRR Metrics**: Track both target IRR (from opportunity) and calculated IRR (from capital activities)
 - **Analytics Dashboard**: Real-time performance metrics, sector allocation, and risk analysis
 - **Capital Activities**: Track contributions, distributions, and valuations
 - **Document Management**: Secure storage for investment documents
@@ -111,6 +114,45 @@ The backend includes comprehensive, interactive API documentation.
    python manage.py runserver
    ```
    Access at: `http://localhost:8000/`
+
+## 🔧 Management Commands
+
+### Daily IRR Accrual
+
+Automatically grow investment values based on opportunity target IRR using compound interest.
+
+**Dry-Run (Test Without Changes):**
+```bash
+python manage.py accrue_daily_irr --dry-run
+```
+
+**Live Accrual:**
+```bash
+python manage.py accrue_daily_irr
+```
+
+**Scheduling (Recommended: Daily at 00:00 UTC):**
+
+**Windows Task Scheduler:**
+```powershell
+schtasks /create /tn "Django IRR Accrual" /tr "python C:\path\to\manage.py accrue_daily_irr" /sc daily /st 00:00
+```
+
+**Linux/Unix Cron:**
+```bash
+# Edit crontab
+crontab -e
+
+# Add line for daily execution at midnight UTC
+0 0 * * * cd /path/to/project && python manage.py accrue_daily_irr
+```
+
+**Features:**
+- ✅ Grows `current_value` daily using compound interest formula
+- ✅ Keeps `total_invested` fixed (original investment amount)
+- ✅ Creates performance snapshots for tracking
+- ✅ Only processes active investments with linked opportunities
+- ✅ Comprehensive error handling and logging
 
 ## 🧪 Testing
 
