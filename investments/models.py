@@ -118,6 +118,15 @@ class Investment(models.Model):
     
     def __str__(self):
         return f"{self.get_name()} - {self.user.email}"
+
+    def save(self, *args, **kwargs):
+        """"Override save to auto-populate name, sector and expected_horizon_years from opportunity if linked."""
+        if self.opportunity:
+            if not self.name:
+                self.name = self.opportunity.title
+            self.sector = self.opportunity.sector
+            self.expected_horizon_years = self.opportunity.investment_term_years
+        super().save(*args, **kwargs)
     
     def get_name(self):
         """Get investment name from opportunity title or legacy name field."""
@@ -146,6 +155,12 @@ class Investment(models.Model):
         if self.opportunity:
             return self.opportunity.target_irr
         return None
+
+    def get_expected_horizon_years(self):
+        """Get expected horizon from opportunity investment term."""
+        if self.opportunity:
+            return self.opportunity.investment_term_years
+        return self.expected_horizon_years
     
     @property
     def unrealized_gain(self):
