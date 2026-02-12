@@ -164,7 +164,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # to avoid errors when manifest is missing
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
-MEDIA_URL = 'media/'
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
@@ -423,7 +423,7 @@ SPECTACULAR_SETTINGS = {
     'SCHEMA_PATH_PREFIX': '/api/',
     'SERVERS': [
         {'url': 'http://localhost:8000', 'description': 'Development server'},
-        {'url': 'https://api.privcaphub.com', 'description': 'Production server'},
+        {'url': 'https://peaceful-possibility-production.up.railway.app', 'description': 'Production server'},
     ],
     
     # UI customization
