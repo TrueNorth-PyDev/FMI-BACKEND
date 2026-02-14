@@ -2,8 +2,9 @@
 Signals for the investments app.
 Handles automatic actions when investment-related models are saved.
 """
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save, post_delete
 from django.dispatch import receiver
+from django.db.models import F
 from django.utils import timezone
 from django.db import transaction
 from decimal import Decimal
@@ -35,6 +36,162 @@ def create_performance_snapshot(sender, instance, created, **kwargs):
                 value=instance.current_value
             )
             logger.info(f"Performance snapshot created for {instance.get_name()}: ${instance.current_value}")
+
+
+@receiver(pre_save, sender=Investment)
+def capture_old_investment_data(sender, instance, **kwargs):
+    """
+    Capture old investment data before saving to detect changes and set initial fund_size.
+    """
+    if instance.pk:
+        try:
+            old_obj = Investment.objects.filter(pk=instance.pk).only('opportunity', 'total_invested').first()
+            instance._old_opportunity_id = old_obj.opportunity_id if old_obj else None
+            instance._old_total_invested = old_obj.total_invested if old_obj else Decimal('0.00')
+        except Exception:
+            instance._old_opportunity_id = None
+            instance._old_total_invested = Decimal('0.00')
+    else:
+        instance._old_opportunity_id = None
+        instance._old_total_invested = Decimal('0.00')
+        
+        # Set initial fund size from opportunity's current raised amount if not provided
+        if instance.opportunity and (not instance.fund_size or instance.fund_size == 0):
+            instance.fund_size = instance.opportunity.current_raised_amount
+            logger.info(f"Set initial fund_size for {instance.get_name()} to ${instance.fund_size}")
+
+
+@receiver(post_save, sender=Investment)
+def sync_opportunity_investors_count_on_save(sender, instance, created, **kwargs):
+    """
+    Sync MarketplaceOpportunity.investors_count when an investment is created or its opportunity changes.
+    """
+    if created:
+        if instance.opportunity:
+            instance.opportunity.__class__.objects.filter(pk=instance.opportunity.pk).update(
+                investors_count=F('investors_count') + 1
+            )
+            logger.info(f"Incremented investors_count for opportunity: {instance.opportunity.title}")
+    else:
+        # Check if opportunity changed
+        old_opp_id = getattr(instance, '_old_opportunity_id', None)
+        new_opp_id = instance.opportunity_id
+        
+        if old_opp_id != new_opp_id:
+            # Decrement old opportunity
+            if old_opp_id:
+                from marketplace.models import MarketplaceOpportunity
+                MarketplaceOpportunity.objects.filter(pk=old_opp_id).update(
+                    investors_count=F('investors_count') - 1
+                )
+                logger.info(f"Decremented investors_count for old opportunity ID: {old_opp_id}")
+            
+            # Increment new opportunity
+            if new_opp_id:
+                instance.opportunity.__class__.objects.filter(pk=new_opp_id).update(
+                    investors_count=F('investors_count') + 1
+                )
+                logger.info(f"Incremented investors_count for new opportunity: {instance.opportunity.title}")
+
+
+@receiver(post_save, sender=Investment)
+def sync_opportunity_financials_on_save(sender, instance, created, **kwargs):
+    """
+    Sync MarketplaceOpportunity.current_raised_amount when an investment is created or updated.
+    """
+    if not instance.opportunity_id and not getattr(instance, '_old_opportunity_id', None):
+        return
+
+    from marketplace.models import MarketplaceOpportunity
+    
+    if created:
+        if instance.opportunity_id:
+            MarketplaceOpportunity.objects.filter(pk=instance.opportunity_id).update(
+                current_raised_amount=F('current_raised_amount') + instance.total_invested
+            )
+            logger.info(f"Incremented raised amount for opportunity ID: {instance.opportunity_id} by ${instance.total_invested}")
+    else:
+        old_opp_id = getattr(instance, '_old_opportunity_id', None)
+        new_opp_id = instance.opportunity_id
+        old_total = getattr(instance, '_old_total_invested', Decimal('0.00'))
+        new_total = instance.total_invested
+        
+        if old_opp_id != new_opp_id:
+            # 1. Decrement old opportunity
+            if old_opp_id:
+                MarketplaceOpportunity.objects.filter(pk=old_opp_id).update(
+                    current_raised_amount=F('current_raised_amount') - old_total
+                )
+                logger.debug(f"Decremented raised amount for old opportunity ID: {old_opp_id} by ${old_total}")
+            
+            # 2. Increment new opportunity
+            if new_opp_id:
+                MarketplaceOpportunity.objects.filter(pk=new_opp_id).update(
+                    current_raised_amount=F('current_raised_amount') + new_total
+                )
+                logger.debug(f"Incremented raised amount for new opportunity ID: {new_opp_id} by ${new_total}")
+        elif old_total != new_total:
+            # Update same opportunity by delta
+            delta = new_total - old_total
+            if new_opp_id:
+                MarketplaceOpportunity.objects.filter(pk=new_opp_id).update(
+                    current_raised_amount=F('current_raised_amount') + delta
+                )
+                logger.debug(f"Adjusted raised amount for opportunity ID: {new_opp_id} by delta: ${delta}")
+
+    # Check for status transitions based on funding progress
+    if instance.opportunity_id:
+        opp = instance.opportunity
+        opp.refresh_from_db()
+        
+        progress = Decimal('0.00')
+        if opp.target_raise_amount > 0:
+            progress = opp.current_raised_amount / opp.target_raise_amount
+            
+        new_status = None
+        if progress >= 1.0:
+            new_status = 'CLOSED'
+        elif progress >= 0.9:
+            new_status = 'CLOSING_SOON'
+        
+        if new_status and opp.status != new_status:
+            # Only transition if it's moving "forward" (ACTIVE -> CLOSING_SOON -> CLOSED)
+            # or if it was NEW/ACTIVE.
+            allowed_transitions = {
+                'CLOSING_SOON': ['NEW', 'ACTIVE'],
+                'CLOSED': ['NEW', 'ACTIVE', 'CLOSING_SOON']
+            }
+            
+            if opp.status in allowed_transitions.get(new_status, []):
+                opp.status = new_status
+                opp.save(update_fields=['status'])
+                logger.info(f"Opportunity {opp.title} transitioned to {new_status} (Progress: {progress*100:.1f}%)")
+
+
+@receiver(post_delete, sender=Investment)
+def sync_opportunity_investors_count_on_delete(sender, instance, **kwargs):
+    """
+    Decrement MarketplaceOpportunity.investors_count when an investment is deleted.
+    """
+    if instance.opportunity_id:
+        from marketplace.models import MarketplaceOpportunity
+        MarketplaceOpportunity.objects.filter(pk=instance.opportunity_id).update(
+            investors_count=F('investors_count') - 1
+        )
+        logger.info(f"Decremented investors_count for opportunity: {instance.opportunity.title} (Investment deleted)")
+
+
+@receiver(post_delete, sender=Investment)
+def sync_opportunity_financials_on_delete(sender, instance, **kwargs):
+    """
+    Decrement MarketplaceOpportunity.current_raised_amount when an investment is deleted.
+    """
+    if instance.opportunity_id:
+        from marketplace.models import MarketplaceOpportunity
+        MarketplaceOpportunity.objects.filter(pk=instance.opportunity_id).update(
+            current_raised_amount=F('current_raised_amount') - instance.total_invested
+        )
+        logger.info(f"Decremented raised amount for opportunity ID: {instance.opportunity_id} by ${instance.total_invested} (Investment deleted)")
 
 
 @receiver(post_save, sender=OwnershipTransfer)

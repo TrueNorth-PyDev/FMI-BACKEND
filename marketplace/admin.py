@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest
+from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest, InvestorInterest
 
 
 class OpportunityDocumentInline(admin.TabularInline):
@@ -41,8 +41,20 @@ class MarketplaceOpportunityAdmin(admin.ModelAdmin):
         ('Contact Information', {
             'fields': ('contact_phone', 'contact_email', 'location')
         }),
-        ('Additional Details', {
-            'fields': ('run_rate_sales_min', 'run_rate_sales_max', 'investment_requirements', 'disclaimer'),
+        ('Cash Flow Overview', {
+            'fields': ('monthly_revenue', 'operating_expenses', 'net_cash_flow', 'cash_runway'),
+            'classes': ('collapse',)
+        }),
+        ('Team & Staff Capacity', {
+            'fields': ('total_staff_count', 'staff_departments', 'leadership_experience_years'),
+            'classes': ('collapse',)
+        }),
+        ('Operational Capacity', {
+            'fields': ('current_capacity', 'utilization_rate_pct', 'growth_capacity'),
+            'classes': ('collapse',)
+        }),
+        ('Investment Requirements', {
+            'fields': ('investment_requirements', 'disclaimer'),
             'classes': ('collapse',)
         }),
         ('Calculated Fields', {

@@ -127,20 +127,70 @@ class MarketplaceOpportunity(models.Model):
     location = models.CharField(max_length=255, blank=True)
     
     # Additional Details
-    run_rate_sales_min = models.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Minimum run rate sales"
+    # Cash Flow Overview
+    monthly_revenue = models.DecimalField(
+        max_digits=15, 
+        decimal_places=2, 
+        null=True, 
+        blank=True, 
+        help_text="Average monthly revenue in Naira"
     )
-    run_rate_sales_max = models.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Maximum run rate sales"
+    operating_expenses = models.DecimalField(
+        max_digits=15, 
+        decimal_places=2, 
+        null=True, 
+        blank=True, 
+        help_text="Average operating expenses in Naira"
     )
+    net_cash_flow = models.DecimalField(
+        max_digits=15, 
+        decimal_places=2, 
+        null=True, 
+        blank=True, 
+        help_text="Monthly net cash flow in Naira"
+    )
+    cash_runway = models.CharField(
+        max_length=100, 
+        blank=True, 
+        help_text="Estimated cash runway (e.g., '18+ months')"
+    )
+
+    # Team and Staff Capacity
+    total_staff_count = models.PositiveIntegerField(
+        null=True, 
+        blank=True, 
+        help_text="Total number of staff"
+    )
+    staff_departments = models.TextField(
+        blank=True, 
+        help_text="Breakdown of staff departments"
+    )
+    leadership_experience_years = models.PositiveIntegerField(
+        null=True, 
+        blank=True, 
+        help_text="Combined years of leadership experience"
+    )
+
+    # Operational Capacity
+    current_capacity = models.CharField(
+        max_length=255, 
+        blank=True, 
+        help_text="Current operational capacity (e.g., '500 clients per month')"
+    )
+    utilization_rate_pct = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True, 
+        validators=[MinValueValidator(Decimal('0.0')), MaxValueValidator(Decimal('100.0'))],
+        help_text="Current utilization rate as a percentage"
+    )
+    growth_capacity = models.CharField(
+        max_length=255, 
+        blank=True, 
+        help_text="Potential growth capacity with existing infrastructure"
+    )
+
     investment_requirements = models.TextField(blank=True, help_text="Investment criteria/requirements")
     disclaimer = models.TextField(blank=True, help_text="Legal disclaimer")
     
@@ -283,3 +333,38 @@ class InvestmentInterest(models.Model):
                 f"Investment interest created: {self.user.email} {self.interest_type} "
                 f"in {self.opportunity.title}"
             )
+
+
+class InvestorInterest(models.Model):
+    """
+    Tracks specific investor intent for a marketplace opportunity.
+    Captures pledged amount and expected investment date.
+    """
+    opportunity = models.ForeignKey(
+        MarketplaceOpportunity,
+        on_delete=models.CASCADE,
+        related_name='investor_interest_pledges'
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='investor_interest_pledges')
+    amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text="Expected investment amount"
+    )
+    investment_date = models.DateField(help_text="Expected date of investment")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'investor_interests'
+        verbose_name = 'Investor Interest'
+        verbose_name_plural = 'Investor Interests'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['opportunity']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.amount} for {self.opportunity.title}"

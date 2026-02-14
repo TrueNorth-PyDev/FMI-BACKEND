@@ -119,8 +119,34 @@ class Investment(models.Model):
     def __str__(self):
         return f"{self.get_name()} - {self.user.email}"
 
+    def clean(self):
+        """
+        Validate that investment doesn't exceed opportunity target.
+        """
+        from django.core.exceptions import ValidationError
+        
+        if self.opportunity and self.total_invested:
+            target = self.opportunity.target_raise_amount
+            current = self.opportunity.current_raised_amount or Decimal('0.00')
+            
+            # For updates, we need to subtract the old amount first
+            if self.pk:
+                try:
+                    old_instance = Investment.objects.get(pk=self.pk)
+                    current -= old_instance.total_invested
+                except Investment.DoesNotExist:
+                    pass
+            
+            if current + self.total_invested > target:
+                raise ValidationError(
+                    f"Total investment exceeds the target amount. "
+                    f"Please buy less as your amount is greater than the target raised amount. "
+                    f"(Target: ${target}, Current: ${current})"
+                )
+
     def save(self, *args, **kwargs):
-        """"Override save to auto-populate name, sector and expected_horizon_years from opportunity if linked."""
+        """Override save to call clean() and handle name/sector defaults."""
+        self.full_clean()
         if self.opportunity:
             if not self.name:
                 self.name = self.opportunity.title

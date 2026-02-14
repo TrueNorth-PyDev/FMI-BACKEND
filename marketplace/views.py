@@ -10,11 +10,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
-from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest
+from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest, InvestorInterest
 from .serializers import (
     MarketplaceOpportunityListSerializer,
     MarketplaceOpportunityDetailSerializer,
     InvestmentInterestSerializer,
+    InvestorInterestSerializer,
 )
 import logging
 
@@ -184,3 +185,23 @@ class WatchlistViewSet(viewsets.ViewSet):
             'watchlist': serializer.data,
             'total_count': len(opportunities)
         })
+
+
+class InvestorInterestViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for tracking specific investor intent ( pledges).
+    """
+    serializer_class = InvestorInterestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        """Users can only see their own interest expressions."""
+        return InvestorInterest.objects.filter(user=self.request.user).select_related('opportunity')
+
+    def perform_create(self, serializer):
+        """Log interest creation."""
+        interest = serializer.save()
+        logger.info(
+            f"Investor pledged interest: {self.request.user.email} pledged "
+            f"${interest.amount} for {interest.opportunity.title}"
+        )

@@ -4,7 +4,7 @@ Handles marketplace opportunities, documents, tags, and user interests.
 """
 
 from rest_framework import serializers
-from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest
+from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest, InvestorInterest
 from decimal import Decimal
 import logging
 
@@ -78,8 +78,11 @@ class MarketplaceOpportunityDetailSerializer(serializers.ModelSerializer):
                   'investment_type_display', 'risk_level', 'risk_level_display', 'payout_frequency',
                   'payout_frequency_display', 'currency', 'rating', 'investors_count', 
                   'platform_rating', 'verification_type', 'verification_type_display',
-                  'contact_phone', 'contact_email', 'location', 'run_rate_sales_min',
-                  'run_rate_sales_max', 'investment_requirements', 'disclaimer',
+                  'contact_phone', 'contact_email', 'location', 
+                  'monthly_revenue', 'operating_expenses', 'net_cash_flow', 'cash_runway',
+                  'total_staff_count', 'staff_departments', 'leadership_experience_years',
+                  'current_capacity', 'utilization_rate_pct', 'growth_capacity',
+                  'investment_requirements', 'disclaimer',
                   'funding_progress_percentage', 'remaining_amount', 'is_featured',
                   'documents', 'tags', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -116,3 +119,28 @@ class InvestmentInterestSerializer(serializers.ModelSerializer):
             f"in {interest.opportunity.title}"
         )
         return interest
+
+
+class InvestorInterestSerializer(serializers.ModelSerializer):
+    """Serializer for investor interest expression."""
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    opportunity_title = serializers.CharField(source='opportunity.title', read_only=True)
+
+    class Meta:
+        model = InvestorInterest
+        fields = [
+            'id', 'opportunity', 'opportunity_title', 'user_email', 
+            'amount', 'investment_date', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_amount(self, value):
+        """Ensure investment amount is positive."""
+        if value <= 0:
+            raise serializers.ValidationError("Investment amount must be greater than zero.")
+        return value
+
+    def create(self, validated_data):
+        """Create investor interest with user from context."""
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
