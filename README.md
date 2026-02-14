@@ -29,14 +29,18 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 - **Document Generation**: Automated transfer paperwork
 
 ### 🏪 Marketplace
-- **Opportunity Discovery**: Browse and search investment opportunities
+- **Opportunity Discovery**: Browse and search with detailed metrics (Cash Flow, Team, Capacity)
 - **Watchlist**: Track interesting deals
-- **Due Diligence**: Access virtual data rooms and documents
-- **Investment Interest**: Express interest and contact sponsors
+- **Due Diligence**: Access virtual data rooms and secure documents
+- **Automated Lifecycle**: 
+    - `NEW` ➔ `ACTIVE` after 24 hours
+    - `ACTIVE` ➔ `CLOSING_SOON` at 90% funding
+    - `CLOSING_SOON` ➔ `CLOSED` at 100% funding
+- **Investment Safeguards**: Automatic prevention of over-funding beyond target
 
 ### 👥 Investor Network
 - **Directory**: Connect with other accredited investors
-- **Profiles**: customizable investor profiles with privacy controls
+- **Profiles**: Customizable investor profiles with privacy controls
 - **Connections**: Send/accept connection requests
 - **Messaging**: Secure internal communication system
 
@@ -45,8 +49,7 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 - **Backend**: Django 4.2, Django REST Framework
 - **Database**: PostgreSQL (Production), SQLite (Development)
 - **Authentication**: SimpleJWT
-- **Documentation**: drf-spectacular (ReDoc, Swagger UI)
-- **Utilities**: django-environ, django-cors-headers, Pillow
+- **Automation**: Management commands + Railway Cron
 - **Science**: NumPy, SciPy (for financial calculations)
 
 ## 📚 API Documentation
@@ -115,44 +118,20 @@ The backend includes comprehensive, interactive API documentation.
    ```
    Access at: `http://localhost:8000/`
 
-## 🔧 Management Commands
+## 🔧 Management Commands (Scheduled Tasks)
 
 ### Daily IRR Accrual
-
 Automatically grow investment values based on opportunity target IRR using compound interest.
+- **Command**: `python manage.py accrue_daily_irr`
+- **Schedule**: Daily at midnight.
 
-**Dry-Run (Test Without Changes):**
-```bash
-python manage.py accrue_daily_irr --dry-run
-```
+### Opportunity Status Transitions
+Transitions opportunities from `NEW` to `ACTIVE` after 24 hours.
+- **Command**: `python manage.py transition_opportunities`
+- **Schedule**: Recommended every 6 hours (`0 */6 * * *`).
 
-**Live Accrual:**
-```bash
-python manage.py accrue_daily_irr
-```
-
-**Scheduling (Recommended: Daily at 00:00 UTC):**
-
-**Windows Task Scheduler:**
-```powershell
-schtasks /create /tn "Django IRR Accrual" /tr "python C:\path\to\manage.py accrue_daily_irr" /sc daily /st 00:00
-```
-
-**Linux/Unix Cron:**
-```bash
-# Edit crontab
-crontab -e
-
-# Add line for daily execution at midnight UTC
-0 0 * * * cd /path/to/project && python manage.py accrue_daily_irr
-```
-
-**Features:**
-- ✅ Grows `current_value` daily using compound interest formula
-- ✅ Keeps `total_invested` fixed (original investment amount)
-- ✅ Creates performance snapshots for tracking
-- ✅ Only processes active investments with linked opportunities
-- ✅ Comprehensive error handling and logging
+### Railway Cron (Production)
+In Railway, set up these commands as separate **Service** schedules to automate your marketplace and portfolio tracking.
 
 ## 🧪 Testing
 
