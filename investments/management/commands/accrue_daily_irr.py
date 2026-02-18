@@ -94,6 +94,7 @@ class Command(BaseCommand):
 
                         # Update investment value
                         investment.current_value = new_value
+                        logger.debug(f"Updated current value for {investment.get_name()}: {investment.current_value}")
                         investment.save(update_fields=['current_value', 'updated_at'])
                         
                         # Create performance snapshot (avoid duplicates)
