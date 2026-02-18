@@ -85,6 +85,13 @@ class Command(BaseCommand):
                 else:
                     # Use transaction to ensure atomicity
                     with transaction.atomic():
+                        # Ensure value doesn't exceed max digits (prevent validation errors)
+                        if new_value > Decimal('999999999999999999.99'):
+                            logger.warning(f"Skipping update for {investment.get_name()}: Value {new_value} exceeds max digits")
+                            self.stdout.write(self.style.WARNING(f"  ⚠ Value overflow for {investment.get_name()}"))
+                            error_count += 1
+                            continue
+
                         # Update investment value
                         investment.current_value = new_value
                         investment.save(update_fields=['current_value', 'updated_at'])
