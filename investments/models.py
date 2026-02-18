@@ -51,26 +51,26 @@ class Investment(models.Model):
     
     # Financial details
     total_invested = models.DecimalField(
-        max_digits=15, 
+        max_digits=20, 
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.01'))],
         help_text="Total amount invested"
     )
     current_value = models.DecimalField(
-        max_digits=15,
+        max_digits=20,
         decimal_places=2,
         validators=[MinValueValidator(Decimal('0.00'))],
         help_text="Current valuation"
     )
     fund_size = models.DecimalField(
-        max_digits=15,
+        max_digits=20,
         decimal_places=2,
         null=True,
         blank=True,
         help_text="Total fund size (AUM)"
     )
     unfunded_commitment = models.DecimalField(
-        max_digits=15,
+        max_digits=20,
         decimal_places=2,
         default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
