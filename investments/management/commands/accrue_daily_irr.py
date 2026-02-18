@@ -73,7 +73,12 @@ class Command(BaseCommand):
                 
                 # Apply growth to current value
                 old_value = investment.current_value
-                new_value = investment.current_value * (1 + daily_rate)
+                raw_new_value = investment.current_value * (1 + daily_rate)
+                
+                # Round to 2 decimal places/cents to avoid "max digits" validation error
+                # caused by high-precision calculation results (e.g., 28 decimal places)
+                new_value = raw_new_value.quantize(Decimal('0.01'))
+                
                 growth = new_value - old_value
                 
                 if dry_run:
