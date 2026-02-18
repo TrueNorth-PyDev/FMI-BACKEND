@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'core',
     'investments',
     'marketplace',
+    'django_rq',
 ]
 
 MIDDLEWARE = [
@@ -458,6 +459,12 @@ SPECTACULAR_SETTINGS = {
 }
 
 
-# OTP Settings
-OTP_LENGTH = 6
 OTP_EXPIRY_MINUTES = 10
+
+# Django RQ Configuration
+RQ_QUEUES = {
+    'default': {
+        'URL': env('REDIS_URL', default='redis://localhost:6379/0'),
+        'DEFAULT_TIMEOUT': 360,
+    },
+}

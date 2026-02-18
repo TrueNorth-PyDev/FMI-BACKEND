@@ -118,20 +118,27 @@ The backend includes comprehensive, interactive API documentation.
    ```
    Access at: `http://localhost:8000/`
 
-## 🔧 Management Commands (Scheduled Tasks)
+## 🔧 Management Commands (Background Tasks)
 
 ### Daily IRR Accrual
 Automatically grow investment values based on opportunity target IRR using compound interest.
-- **Command**: `python manage.py accrue_daily_irr`
-- **Schedule**: Daily at midnight.
+- **Task**: `investments.tasks.run_daily_irr_accrual`
+- **Schedule**: Daily at midnight (Managed by `django-rq`).
 
 ### Opportunity Status Transitions
 Transitions opportunities from `NEW` to `ACTIVE` after 24 hours.
-- **Command**: `python manage.py transition_opportunities`
-- **Schedule**: Recommended every 6 hours (`0 */6 * * *`).
+- **Task**: `marketplace.tasks.run_transition_opportunities`
+- **Schedule**: Every 6 hours (Managed by `django-rq`).
 
-### Railway Cron (Production)
-In Railway, set up these commands as separate **Service** schedules to automate your marketplace and portfolio tracking.
+### Railway Worker (Production)
+In Railway, use the **Worker Service** running `sh run_worker.sh`. This process handles:
+1.  **Scheduler**: Triggers the tasks at the right time.
+2.  **Worker**: Executes the tasks in the background.
+
+To initialize the schedule, run this command once:
+```bash
+python manage.py setup_periodic_tasks
+```
 
 ## 🧪 Testing
 

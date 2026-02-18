@@ -86,13 +86,13 @@ Authorization: Bearer <access_token>
 #### Daily IRR Accrual
 Automatic daily growth of investment values based on opportunity target IRR.
 - **Command**: `python manage.py accrue_daily_irr`
-- **Schedule**: Recommended daily at 00:00 UTC.
+- **Schedule**: Automatically scheduled daily at 00:00 UTC via `django-rq`.
 
 #### Opportunity Status Transitions
 Automatic lifecycle management for marketplace opportunities.
 - **Command**: `python manage.py transition_opportunities`
 - **Behavior**: Transitions `NEW` opportunities to `ACTIVE` after 24 hours.
-- **Schedule**: Recommended every 6 hours (`0 */6 * * *`).
+- **Schedule**: Automatically scheduled every 6 hours via `django-rq`.
 
 ---
 
