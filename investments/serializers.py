@@ -347,6 +347,90 @@ class OwnershipTransferCreateSerializer(serializers.ModelSerializer):
         return transfer
 
 
+
+class SecondaryMarketListingSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for the secondary market.
+    Surfaces PENDING OwnershipTransfers as investment listings visible to all users.
+    """
+    # Investment / opportunity detail
+    investment_name = serializers.SerializerMethodField()
+    investment_sector = serializers.SerializerMethodField()
+    investment_sector_display = serializers.SerializerMethodField()
+    opportunity_id = serializers.IntegerField(source='investment.opportunity.id', read_only=True, allow_null=True)
+    opportunity_title = serializers.CharField(source='investment.opportunity.title', read_only=True, allow_null=True)
+    opportunity_target_irr = serializers.DecimalField(
+        source='investment.opportunity.target_irr', max_digits=5, decimal_places=2, read_only=True, allow_null=True
+    )
+    opportunity_min_investment = serializers.DecimalField(
+        source='investment.opportunity.min_investment', max_digits=15, decimal_places=2, read_only=True, allow_null=True
+    )
+    opportunity_investment_term_years = serializers.IntegerField(
+        source='investment.opportunity.investment_term_years', read_only=True, allow_null=True
+    )
+    opportunity_risk_level = serializers.CharField(
+        source='investment.opportunity.risk_level', read_only=True, allow_null=True
+    )
+    opportunity_payout_frequency = serializers.CharField(
+        source='investment.opportunity.payout_frequency', read_only=True, allow_null=True
+    )
+
+    # Transfer terms
+    transfer_type_display = serializers.CharField(source='get_transfer_type_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    # Seller info — display name only, no PII email
+    seller_display_name = serializers.SerializerMethodField()
+
+    # Convenience flag
+    is_partial = serializers.SerializerMethodField()
+
+    # Listed timestamp alias
+    listed_at = serializers.DateTimeField(source='initiated_date', read_only=True)
+
+    class Meta:
+        model = OwnershipTransfer
+        fields = [
+            'id',
+            # Investment / opportunity
+            'investment', 'investment_name', 'investment_sector', 'investment_sector_display',
+            'opportunity_id', 'opportunity_title', 'opportunity_target_irr',
+            'opportunity_min_investment', 'opportunity_investment_term_years',
+            'opportunity_risk_level', 'opportunity_payout_frequency',
+            # Transfer terms
+            'transfer_type', 'transfer_type_display', 'is_partial',
+            'percentage', 'transfer_amount', 'transfer_fee', 'net_amount',
+            'reason',
+            # Seller
+            'seller_display_name',
+            # Dates
+            'status', 'status_display', 'listed_at', 'estimated_completion_date',
+        ]
+        read_only_fields = fields
+
+    def get_investment_name(self, obj):
+        return obj.investment.get_name()
+
+    def get_investment_sector(self, obj):
+        return obj.investment.get_sector()
+
+    def get_investment_sector_display(self, obj):
+        return obj.investment.get_sector_display()
+
+    def get_seller_display_name(self, obj):
+        """Return seller's first name, or a masked email (e.g. j***@example.com)."""
+        user = obj.from_user
+        if user.first_name:
+            return user.first_name
+        email = user.email
+        local, domain = email.split('@', 1)
+        masked = local[0] + '***'
+        return f"{masked}@{domain}"
+
+    def get_is_partial(self, obj):
+        return obj.transfer_type == 'PARTIAL'
+
+
 # Analytics Serializers
 
 class QuarterlyPerformanceSerializer(serializers.Serializer):

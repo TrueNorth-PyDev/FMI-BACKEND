@@ -164,3 +164,117 @@ class TransferTests(APITestCase):
             activity_type='INITIAL_INVESTMENT',
             amount=Decimal('-10000.00')
         ).exists())
+
+
+class SecondaryMarketplaceTests(APITestCase):
+    def setUp(self):
+        # Seller
+        self.seller = User.objects.create_user(
+            username='seller', email='seller@example.com',
+            password='Password123!', is_email_verified=True
+        )
+        # Buyer
+        self.buyer = User.objects.create_user(
+            username='buyer', email='buyer@example.com',
+            password='Password123!', is_email_verified=True
+        )
+        self.investment = Investment.objects.create(
+            user=self.seller, name='Agri Fund I', sector='AGRICULTURE',
+            total_invested=100000, current_value=110000,
+            investment_date=timezone.now().date()
+        )
+        # A PENDING transfer — should appear on the marketplace
+        self.pending_transfer = OwnershipTransfer.objects.create(
+            investment=self.investment,
+            from_user=self.seller,
+            to_email='anyone@example.com',
+            transfer_type='PARTIAL',
+            percentage=25,
+            transfer_amount=Decimal('25000.00'),
+            status='PENDING',
+            reason='Need liquidity',
+        )
+        # A DRAFT transfer — must NOT appear on the marketplace
+        self.draft_transfer = OwnershipTransfer.objects.create(
+            investment=self.investment,
+            from_user=self.seller,
+            to_email='other@example.com',
+            transfer_type='PARTIAL',
+            percentage=10,
+            transfer_amount=Decimal('10000.00'),
+            status='DRAFT',
+            reason='Still drafting',
+        )
+        self.list_url = reverse('investments:secondary-market-list')
+        self.detail_url = reverse('investments:secondary-market-detail', args=[self.pending_transfer.id])
+
+    # --- Authentication ---
+
+    def test_unauthenticated_request_rejected(self):
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    # --- Listing visibility ---
+
+    def test_pending_transfer_appears_in_listing(self):
+        self.client.force_authenticate(user=self.buyer)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item['id'] for item in response.data['results']]
+        self.assertIn(self.pending_transfer.id, ids)
+
+    def test_draft_transfer_excluded_from_listing(self):
+        self.client.force_authenticate(user=self.buyer)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item['id'] for item in response.data['results']]
+        self.assertNotIn(self.draft_transfer.id, ids)
+
+    def test_detail_view_returns_listing(self):
+        self.client.force_authenticate(user=self.buyer)
+        response = self.client.get(self.detail_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['id'], self.pending_transfer.id)
+        self.assertEqual(response.data['investment_name'], 'Agri Fund I')
+        self.assertIn('transfer_amount', response.data)
+        self.assertIn('seller_display_name', response.data)
+
+    # --- Filtering ---
+
+    def test_filter_by_transfer_type(self):
+        self.client.force_authenticate(user=self.buyer)
+        response = self.client.get(self.list_url, {'transfer_type': 'FULL'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+
+    def test_filter_by_min_amount(self):
+        self.client.force_authenticate(user=self.buyer)
+        response = self.client.get(self.list_url, {'min_amount': '30000'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+
+    # --- express_interest ---
+
+    def test_buyer_can_express_interest(self):
+        self.client.force_authenticate(user=self.buyer)
+        # Attach an opportunity so the action has something to link to
+        from marketplace.models import MarketplaceOpportunity
+        opp = MarketplaceOpportunity.objects.create(
+            title='Agri Fund I Opp', description='desc', sector='AGRICULTURE',
+            min_investment=Decimal('1000.00'), target_raise_amount=Decimal('500000.00'),
+        )
+        self.investment.opportunity = opp
+        self.investment.save()
+
+        url = reverse('investments:secondary-market-express-interest', args=[self.pending_transfer.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['created'])
+        self.assertIn('interest_id', response.data)
+
+    def test_seller_cannot_express_interest_in_own_listing(self):
+        self.client.force_authenticate(user=self.seller)
+        url = reverse('investments:secondary-market-express-interest', args=[self.pending_transfer.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+

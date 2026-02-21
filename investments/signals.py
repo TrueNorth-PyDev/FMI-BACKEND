@@ -225,7 +225,7 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
         # Don't raise exception in signal - log and skip
         return
     
-    # Wrap entire operation in atomic transaction
+    # Wrap financial operations in atomic transaction
     try:
         with transaction.atomic():
             # Calculate proportional cost basis
@@ -245,7 +245,14 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
                 seller_investment.current_value = Decimal('0.00')
                 seller_investment.total_invested = Decimal('0.00')
             
-            seller_investment.save()
+            # Use update_fields to bypass full_clean() — we already validated
+            # transfer_amount above so this save is always safe.
+            Investment.objects.filter(pk=seller_investment.pk).update(
+                current_value=seller_investment.current_value,
+                total_invested=seller_investment.total_invested,
+                status=seller_investment.status,
+            )
+            seller_investment.refresh_from_db()
             
             # Log Seller Activity
             CapitalActivity.objects.create(
@@ -257,25 +264,33 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
             )
             
             # 2. Create/Update Buyer's Investment
+            # Initialize with the transfer amount directly so total_invested passes
+            # MinValueValidator(0.01) on creation. If a buyer investment already
+            # exists for this opportunity, we increment its values below instead.
             buyer_investment, created_inv = Investment.objects.get_or_create(
                 user=buyer,
                 opportunity=seller_investment.opportunity,  # Link to same opportunity
-                name=seller_investment.name or seller_investment.get_name(),  # Use legacy name if exists
+                name=seller_investment.name or seller_investment.get_name(),
                 defaults={
-                    'sector': seller_investment.sector or seller_investment.get_sector(),  # Use legacy sector
+                    'sector': seller_investment.sector or seller_investment.get_sector(),
                     'status': 'ACTIVE',
-                    'total_invested': Decimal('0.00'),
-                    'current_value': Decimal('0.00'),
+                    'total_invested': instance.transfer_amount,
+                    'current_value': instance.transfer_amount,
                     'investment_date': timezone.now().date(),
                     'manager': seller_investment.manager,
                     'fund_vintage': seller_investment.fund_vintage,
                 }
             )
-            
-            # Update Buyer Values
-            buyer_investment.total_invested += instance.transfer_amount
-            buyer_investment.current_value += instance.transfer_amount
-            buyer_investment.save()
+
+            # Update Buyer Values (only if the investment already existed)
+            if not created_inv:
+                buyer_investment.total_invested += instance.transfer_amount
+                buyer_investment.current_value += instance.transfer_amount
+                Investment.objects.filter(pk=buyer_investment.pk).update(
+                    current_value=buyer_investment.current_value,
+                    total_invested=buyer_investment.total_invested,
+                )
+                buyer_investment.refresh_from_db()
             
             # Log Buyer Activity
             CapitalActivity.objects.create(
@@ -292,21 +307,6 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
                 instance.completion_date = timezone.now()
             instance.save(update_fields=['is_processed', 'completion_date'])
             
-            # Log portfolio update activity for both users
-            from accounts.models import UserActivity
-            UserActivity.log_activity(
-                user=instance.from_user,
-                activity_type='PORTFOLIO_UPDATE',
-                description=f'Transfer of ${instance.transfer_amount} completed',
-                metadata={'transfer_id': instance.id, 'type': 'seller'}
-            )
-            UserActivity.log_activity(
-                user=buyer,
-                activity_type='PORTFOLIO_UPDATE',
-                description=f'Received ${instance.transfer_amount} via transfer',
-                metadata={'transfer_id': instance.id, 'type': 'buyer'}
-            )
-            
             logger.info(
                 f"Successfully processed transfer {instance.id}: "
                 f"{instance.from_user.email} → {buyer.email}, "
@@ -316,3 +316,23 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
     except Exception as e:
         logger.error(f"Failed to process transfer {instance.id}: {str(e)}", exc_info=True)
         # Transaction will rollback automatically
+        return
+
+    # Log portfolio update activity OUTSIDE the atomic block so audit logging
+    # failures never roll back the financial transfer itself.
+    try:
+        from accounts.models import UserActivity
+        UserActivity.log_activity(
+            user=instance.from_user,
+            activity_type='PORTFOLIO_UPDATE',
+            description=f'Transfer of ${instance.transfer_amount} completed',
+            metadata={'transfer_id': instance.id, 'type': 'seller'}
+        )
+        UserActivity.log_activity(
+            user=buyer,
+            activity_type='PORTFOLIO_UPDATE',
+            description=f'Received ${instance.transfer_amount} via transfer',
+            metadata={'transfer_id': instance.id, 'type': 'buyer'}
+        )
+    except Exception as e:
+        logger.warning(f"Failed to log UserActivity for transfer {instance.id}: {str(e)}")

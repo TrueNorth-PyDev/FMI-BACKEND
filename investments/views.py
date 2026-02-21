@@ -28,6 +28,7 @@ from .serializers import (
     OwnershipTransferListSerializer,
     OwnershipTransferDetailSerializer,
     OwnershipTransferCreateSerializer,
+    SecondaryMarketListingSerializer,
     QuarterlyPerformanceSerializer,
     AssetAllocationSerializer,
     RebalancingRecommendationSerializer,
@@ -453,3 +454,110 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         })
 
 
+class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet exposing all PENDING ownership transfers as secondary-market listings.
+
+    Any authenticated user can browse investments that other users have put up for sale.
+    Filtering is supported via query params:
+      - sector       : e.g. TECHNOLOGY
+      - transfer_type: FULL | PARTIAL
+      - min_amount   : minimum transfer_amount
+      - max_amount   : maximum transfer_amount
+
+    Extra action:
+      POST /secondary-market/{id}/express_interest/
+        Creates an InvestorInterest record against the underlying opportunity so the
+        seller/platform can follow up with interested buyers.
+    """
+    serializer_class = SecondaryMarketListingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        """Return all PENDING transfers (platform-wide, not scoped to current user)."""
+        from django.db.models import Q
+
+        qs = OwnershipTransfer.objects.filter(
+            status='PENDING'
+        ).select_related(
+            'investment',
+            'investment__opportunity',
+            'from_user',
+        ).order_by('-initiated_date')
+
+        params = self.request.query_params
+
+        sector = params.get('sector')
+        if sector:
+            qs = qs.filter(investment__opportunity__sector=sector)
+
+        transfer_type = params.get('transfer_type')
+        if transfer_type:
+            qs = qs.filter(transfer_type=transfer_type)
+
+        min_amount = params.get('min_amount')
+        if min_amount:
+            try:
+                qs = qs.filter(transfer_amount__gte=min_amount)
+            except (ValueError, TypeError):
+                pass
+
+        max_amount = params.get('max_amount')
+        if max_amount:
+            try:
+                qs = qs.filter(transfer_amount__lte=max_amount)
+            except (ValueError, TypeError):
+                pass
+
+        return qs
+
+    @action(detail=True, methods=['post'])
+    def express_interest(self, request, pk=None):
+        """
+        Register buyer interest in a secondary-market listing.
+
+        Creates an InvestorInterest record (INVESTED type) against the underlying
+        MarketplaceOpportunity so the platform can track demand.
+        """
+        from marketplace.models import InvestorInterest
+
+        transfer = self.get_object()
+
+        # Seller cannot express interest in their own listing
+        if transfer.from_user == request.user:
+            return Response(
+                {"error": "You cannot express interest in your own listing."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        opportunity = transfer.investment.opportunity
+        if not opportunity:
+            return Response(
+                {"error": "This listing has no linked marketplace opportunity."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        interest, created = InvestorInterest.objects.get_or_create(
+            user=request.user,
+            opportunity=opportunity,
+            defaults={
+                'amount': transfer.transfer_amount,
+                'investment_date': timezone.now().date(),
+            },
+        )
+
+        logger.info(
+            f"Secondary market interest: {request.user.email} interested in "
+            f"transfer {transfer.id} (opportunity: {opportunity.title})"
+        )
+
+        return Response(
+            {
+                "message": "Interest registered successfully.",
+                "interest_id": interest.id,
+                "created": created,
+                "opportunity": opportunity.title,
+                "transfer_amount": str(transfer.transfer_amount),
+            },
+            status=status.HTTP_200_OK,
+        )
