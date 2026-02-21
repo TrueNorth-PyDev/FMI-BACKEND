@@ -125,12 +125,14 @@ class InvestorInterestSerializer(serializers.ModelSerializer):
     """Serializer for investor interest expression."""
     user_email = serializers.EmailField(source='user.email', read_only=True)
     opportunity_title = serializers.CharField(source='opportunity.title', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
 
     class Meta:
         model = InvestorInterest
         fields = [
-            'id', 'opportunity', 'opportunity_title', 'user_email', 
-            'amount', 'investment_date', 'created_at', 'updated_at'
+            'id', 'opportunity', 'opportunity_title', 'user_email',
+            'amount', 'investment_date', 'status', 'status_display',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 

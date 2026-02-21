@@ -340,6 +340,12 @@ class InvestorInterest(models.Model):
     Tracks specific investor intent for a marketplace opportunity.
     Captures pledged amount and expected investment date.
     """
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('CONVERTED', 'Converted to Investment'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
     opportunity = models.ForeignKey(
         MarketplaceOpportunity,
         on_delete=models.CASCADE,
@@ -353,6 +359,12 @@ class InvestorInterest(models.Model):
         help_text="Expected investment amount"
     )
     investment_date = models.DateField(help_text="Expected date of investment")
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+        help_text="Whether this interest has been registered as an actual investment"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -364,7 +376,8 @@ class InvestorInterest(models.Model):
         indexes = [
             models.Index(fields=['user']),
             models.Index(fields=['opportunity']),
+            models.Index(fields=['status']),
         ]
 
     def __str__(self):
-        return f"{self.user.email} - {self.amount} for {self.opportunity.title}"
+        return f"{self.user.email} - {self.amount} for {self.opportunity.title} [{self.get_status_display()}]"

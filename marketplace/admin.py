@@ -101,7 +101,7 @@ class InvestmentInterestAdmin(admin.ModelAdmin):
 @admin.register(InvestorInterest)
 class InvestorInterestAdmin(admin.ModelAdmin):
     """Admin interface for InvestorInterest model."""
-    list_display = ['user', 'opportunity', 'amount', 'investment_date', 'created_at']
-    list_filter = ['created_at', 'investment_date']
+    list_display = ['user', 'opportunity', 'amount', 'investment_date', 'status', 'created_at']
+    list_filter = ['status', 'created_at', 'investment_date']
     search_fields = ['user__email', 'opportunity__title']
     readonly_fields = ['created_at', 'updated_at']
