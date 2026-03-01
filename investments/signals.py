@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.db import transaction
 from decimal import Decimal
 from .models import OwnershipTransfer, Investment, CapitalActivity, PerformanceSnapshot
+from marketplace.models import InvestorInterest
 import logging
 
 logger = logging.getLogger('investments')
@@ -336,3 +337,99 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
         )
     except Exception as e:
         logger.warning(f"Failed to log UserActivity for transfer {instance.id}: {str(e)}")
+
+
+@receiver(pre_save, sender=InvestorInterest)
+def capture_investor_interest_old_status(sender, instance, **kwargs):
+    """
+    Capture the old status of an InvestorInterest before saving,
+    so the post_save signal can detect transitions.
+    """
+    if instance.pk:
+        try:
+            old = InvestorInterest.objects.filter(pk=instance.pk).only('status').first()
+            instance._old_status = old.status if old else None
+        except Exception:
+            instance._old_status = None
+    else:
+        instance._old_status = None
+
+
+@receiver(post_save, sender=InvestorInterest)
+def convert_investor_interest_to_investment(sender, instance, created, **kwargs):
+    """
+    Automatically create (or update) an Investment when an InvestorInterest
+    status transitions to 'CONVERTED'.
+
+    Field mapping:
+      - user            <- interest.user
+      - opportunity     <- interest.opportunity
+      - name            <- opportunity.title
+      - sector          <- opportunity.sector
+      - total_invested  <- interest.amount
+      - current_value   <- interest.amount
+      - investment_date <- interest.investment_date
+      - status          <- 'ACTIVE'
+    """
+    # Only act on a transition TO 'CONVERTED' (not on creation with CONVERTED
+    # set directly, which is an unusual admin edge-case — guard with created check)
+    old_status = getattr(instance, '_old_status', None)
+    if instance.status != 'CONVERTED' or old_status == 'CONVERTED':
+        return
+
+    opportunity = instance.opportunity
+
+    try:
+        with transaction.atomic():
+            investment, inv_created = Investment.objects.get_or_create(
+                user=instance.user,
+                opportunity=opportunity,
+                defaults={
+                    'name': opportunity.title,
+                    'sector': opportunity.sector,
+                    'total_invested': instance.amount,
+                    'current_value': instance.amount,
+                    'investment_date': instance.investment_date,
+                    'status': 'ACTIVE',
+                }
+            )
+
+            if not inv_created:
+                # Investment already exists — top it up
+                Investment.objects.filter(pk=investment.pk).update(
+                    total_invested=investment.total_invested + instance.amount,
+                    current_value=investment.current_value + instance.amount,
+                )
+                investment.refresh_from_db()
+
+                # Manually sync the opportunity since we used .update() which
+                # bypasses signals — the opportunity counter would otherwise miss
+                # this additional amount.
+                from marketplace.models import MarketplaceOpportunity
+                MarketplaceOpportunity.objects.filter(pk=opportunity.pk).update(
+                    current_raised_amount=F('current_raised_amount') + instance.amount
+                )
+
+            # Record the capital inflow
+            CapitalActivity.objects.create(
+                investment=investment,
+                activity_type='INITIAL_INVESTMENT',
+                amount=-instance.amount,  # negative = outflow from investor
+                date=instance.investment_date,
+                details=(
+                    f"Converted from investor interest #{instance.pk} "
+                    f"for {opportunity.title}"
+                ),
+            )
+
+            logger.info(
+                f"InvestorInterest #{instance.pk} converted: "
+                f"{instance.user.email} → Investment #{investment.pk} "
+                f"(${instance.amount} in {opportunity.title})"
+            )
+
+    except Exception as e:
+        logger.error(
+            f"Failed to convert InvestorInterest #{instance.pk} to Investment: {e}",
+            exc_info=True,
+        )

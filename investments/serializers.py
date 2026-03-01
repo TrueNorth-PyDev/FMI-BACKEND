@@ -302,10 +302,6 @@ class OwnershipTransferCreateSerializer(serializers.ModelSerializer):
         if investment.status not in ['ACTIVE', 'UNDERPERFORMING']:
             raise serializers.ValidationError({"investment": "Cannot transfer inactive investments."})
         
-        # Validate recipient
-        if not attrs.get('to_user') and not attrs.get('to_email'):
-            raise serializers.ValidationError("Either to_user or to_email must be provided.")
-        
         # Cannot transfer to self
         if attrs.get('to_user') == request.user:
             raise serializers.ValidationError({"to_user": "Cannot transfer to yourself."})

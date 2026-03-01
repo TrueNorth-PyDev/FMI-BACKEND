@@ -217,3 +217,82 @@ class InvestorInterestTests(APITestCase):
             amount=Decimal('5000.00'), investment_date='2026-06-01'
         )
         self.assertIn('Pending', str(interest))
+
+
+# ---------------------------------------------------------------------------
+# InvestorInterestConversionTests  (auto-create Investment on CONVERTED)
+# ---------------------------------------------------------------------------
+
+class InvestorInterestConversionTests(APITestCase):
+    """
+    Tests that setting InvestorInterest.status = 'CONVERTED' automatically
+    creates a matching Investment record (and a CapitalActivity entry).
+    """
+
+    def setUp(self):
+        from investments.models import Investment, CapitalActivity
+        self.Investment = Investment
+        self.CapitalActivity = CapitalActivity
+
+        self.user = make_user(email='converter@example.com')
+        self.client.force_authenticate(user=self.user)
+        self.opp = make_opportunity(
+            title='Auto-Convert Opp',
+            sector='FINTECH',
+            min_investment=Decimal('5000.00'),
+            target_raise_amount=Decimal('200000.00'),
+        )
+        self.interest = InvestorInterest.objects.create(
+            user=self.user,
+            opportunity=self.opp,
+            amount=Decimal('10000.00'),
+            investment_date='2026-07-01',
+        )
+        self.detail_url = reverse('marketplace:investor-interest-detail', args=[self.interest.id])
+
+    def test_conversion_creates_investment(self):
+        """Patching status to CONVERTED should create an Investment with correct fields."""
+        response = self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Investment must exist
+        inv = self.Investment.objects.filter(user=self.user, opportunity=self.opp).first()
+        self.assertIsNotNone(inv, "Investment should have been created on CONVERTED transition")
+
+        # Field values
+        self.assertEqual(inv.total_invested, Decimal('10000.00'))
+        self.assertEqual(inv.current_value, Decimal('10000.00'))
+        self.assertEqual(str(inv.investment_date), '2026-07-01')
+        self.assertEqual(inv.status, 'ACTIVE')
+
+    def test_conversion_creates_capital_activity(self):
+        """A CONVERTED interest should produce an INITIAL_INVESTMENT CapitalActivity."""
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        inv = self.Investment.objects.get(user=self.user, opportunity=self.opp)
+        activity = self.CapitalActivity.objects.filter(
+            investment=inv,
+            activity_type='INITIAL_INVESTMENT',
+        ).first()
+        self.assertIsNotNone(activity, "CapitalActivity(INITIAL_INVESTMENT) should be created")
+        self.assertEqual(activity.amount, -Decimal('10000.00'))
+
+    def test_conversion_is_idempotent(self):
+        """
+        If the interest is already CONVERTED, saving it again should NOT
+        create a second Investment or inflate the existing one.
+        """
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        # Save again with no status change (already CONVERTED)
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+
+        count = self.Investment.objects.filter(user=self.user, opportunity=self.opp).count()
+        self.assertEqual(count, 1, "Only one Investment should exist after duplicate CONVERTED saves")
+
+        inv = self.Investment.objects.get(user=self.user, opportunity=self.opp)
+        self.assertEqual(inv.total_invested, Decimal('10000.00'), "total_invested should not be doubled")
+
+    def test_no_conversion_on_cancelled(self):
+        """Setting status to CANCELLED must NOT create an Investment."""
+        self.client.patch(self.detail_url, {'status': 'CANCELLED'})
+        exists = self.Investment.objects.filter(user=self.user, opportunity=self.opp).exists()
+        self.assertFalse(exists, "No Investment should be created when status is CANCELLED")
