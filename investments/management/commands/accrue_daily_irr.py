@@ -31,10 +31,37 @@ class Command(BaseCommand):
             action='store_true',
             help='Show what would be updated without making changes',
         )
+        parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Skip the already-ran-today guard and force accrual (use with caution)',
+        )
     
     def handle(self, *args, **options):
         dry_run = options.get('dry_run', False)
-        
+        force = options.get('force', False)
+
+        today = timezone.now().date()
+
+        # ---------------------------------------------------------------
+        # Idempotency guard — prevent running more than once per day.
+        # This protects against multiple Railway deployments in a single day
+        # each triggering an immediate accrual via setup_periodic_tasks.
+        # We use PerformanceSnapshot as the sentinel: if any snapshot exists
+        # for today, the accrual has already run.
+        # ---------------------------------------------------------------
+        if not dry_run and not force:
+            already_ran = PerformanceSnapshot.objects.filter(date=today).exists()
+            if already_ran:
+                msg = (
+                    f'Daily IRR accrual already completed for {today}. '
+                    'Skipping. Use --force to override.'
+                )
+                self.stdout.write(self.style.WARNING(msg))
+                logger.info(msg)
+                return
+
+
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN MODE - No changes will be saved'))
         
