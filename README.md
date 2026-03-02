@@ -2,8 +2,6 @@
 
 A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a private portfolio application for investors to monitor their investments, manage ownership transfers, and explore marketplace opportunities.
 
-![Dashboard Preview](file:///C:/Users/HP/.gemini/antigravity/brain/f1d70b52-3e97-41df-a7c4-4fb31359e010/api_docs_redoc_1768416652193.png)
-
 ## 🚀 Key Features
 
 ### 🔐 Authentication & Security
@@ -17,9 +15,11 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 - **Investment Tracking**: Monitor private equity, VC, and real estate investments
 - **Opportunity Integration**: Link investments to marketplace opportunities for automatic data synchronization
 - **Daily IRR Accrual**: Automatic daily growth of investment values based on target IRR (compound interest)
+  - **Idempotency Guard**: Runs at most once per calendar day — safe across multiple Railway deploys. Use `--force` to override manually.
 - **Dual IRR Metrics**: Track both target IRR (from opportunity) and calculated IRR (from capital activities)
 - **Analytics Dashboard**: Real-time performance metrics, sector allocation, and risk analysis
-- **Capital Activities**: Track contributions, distributions, and valuations
+- **Capital Activities**: Track contributions, distributions, partial exits, and full exits
+  - Types: `INITIAL_INVESTMENT`, `CAPITAL_CALL`, `DISTRIBUTION`, `PARTIAL_EXIT`, `FULL_EXIT`
 - **Document Management**: Secure storage for investment documents
 
 ### 🔄 Ownership Transfers
@@ -32,11 +32,22 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 - **Opportunity Discovery**: Browse and search with detailed metrics (Cash Flow, Team, Capacity)
 - **Watchlist**: Track interesting deals
 - **Due Diligence**: Access virtual data rooms and secure documents
-- **Automated Lifecycle**: 
+- **Investor Interest**: Express interest in opportunities; auto-converts to `Investment` when status is set to `CONVERTED`
+- **Automated Lifecycle**:
     - `NEW` ➔ `ACTIVE` after 24 hours
     - `ACTIVE` ➔ `CLOSING_SOON` at 90% funding
     - `CLOSING_SOON` ➔ `CLOSED` at 100% funding
 - **Investment Safeguards**: Automatic prevention of over-funding beyond target
+
+### 🔁 Secondary Marketplace
+- **Browse Listings**: View all `PENDING` ownership transfers listed by other investors
+- **Buyer Interest (Two-Step Flow)**:
+  1. `POST /{id}/express_interest/` → creates a `SecondaryMarketInterest` record (`PENDING`). No money moves.
+  2. `PATCH /secondary-market-interests/{id}/` `{ "status": "CONVERTED" }` → atomically executes the transfer:
+     - Deducts amount from seller's investment (`PARTIAL_EXIT` or `FULL_EXIT` capital activity)
+     - Creates / tops-up buyer's investment with an `INITIAL_INVESTMENT` capital activity
+     - Marks the `OwnershipTransfer` as `COMPLETED`
+- **Full Exit Detection**: Logs a `FULL_EXIT` activity (instead of `PARTIAL_EXIT`) when a buyout wipes the seller's entire position
 
 ### 👥 Investor Network
 - **Directory**: Connect with other accredited investors
@@ -124,6 +135,10 @@ The backend includes comprehensive, interactive API documentation.
 Automatically grow investment values based on opportunity target IRR using compound interest.
 - **Task**: `investments.tasks.run_daily_irr_accrual`
 - **Schedule**: Daily at midnight (Managed by `django-rq`).
+- **Idempotency**: Skips automatically if already executed today. Override with `--force`:
+  ```bash
+  python manage.py accrue_daily_irr --force
+  ```
 
 ### Opportunity Status Transitions
 Transitions opportunities from `NEW` to `ACTIVE` after 24 hours.
@@ -134,6 +149,8 @@ Transitions opportunities from `NEW` to `ACTIVE` after 24 hours.
 In Railway, use the **Worker Service** running `sh run_worker.sh`. This process handles:
 1.  **Scheduler**: Triggers the tasks at the right time.
 2.  **Worker**: Executes the tasks in the background.
+
+> ⚠️ `run_worker.sh` calls `setup_periodic_tasks` on every deploy, which schedules the IRR accrual for immediate execution. The built-in idempotency guard prevents double-accrual on days with multiple deployments.
 
 To initialize the schedule, run this command once:
 ```bash

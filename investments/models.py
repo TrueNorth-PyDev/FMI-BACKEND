@@ -243,6 +243,7 @@ class CapitalActivity(models.Model):
         ('CAPITAL_CALL', 'Capital Call'),
         ('DISTRIBUTION', 'Distribution'),
         ('PARTIAL_EXIT', 'Partial Exit'),
+        ('FULL_EXIT', 'Full Exit'),
     ]
     
     investment = models.ForeignKey(
@@ -472,3 +473,65 @@ class TransferDocument(models.Model):
     def __str__(self):
         return f"{self.get_document_type_display()} - {self.transfer}"
 
+
+class SecondaryMarketInterest(models.Model):
+    """
+    Records a buyer's interest in a specific secondary-market listing
+    (OwnershipTransfer). When the status transitions to CONVERTED, a signal
+    automatically executes the financial transfer: deducting from the seller's
+    Investment and creating/topping-up the buyer's Investment.
+    """
+    STATUS_CHOICES = [
+        ('PENDING',   'Pending'),
+        ('CONVERTED', 'Converted'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
+    transfer = models.ForeignKey(
+        OwnershipTransfer,
+        on_delete=models.CASCADE,
+        related_name='buyer_interests',
+        help_text='The secondary-market listing (OwnershipTransfer) the buyer is interested in',
+    )
+    buyer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='secondary_market_interests',
+        help_text='The user expressing interest (buyer)',
+    )
+    amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text='Amount the buyer wants to acquire (must be ≤ transfer.transfer_amount)',
+    )
+    interest_date = models.DateField(
+        default=timezone.now,
+        help_text='Date of interest / expected settlement date',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'secondary_market_interests'
+        verbose_name = 'Secondary Market Interest'
+        verbose_name_plural = 'Secondary Market Interests'
+        ordering = ['-created_at']
+        # One buyer per transfer listing (idempotency guard)
+        unique_together = [('transfer', 'buyer')]
+        indexes = [
+            models.Index(fields=['transfer', 'status']),
+            models.Index(fields=['buyer', 'status']),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.buyer.email} → {self.transfer} "
+            f"(${self.amount}, {self.status})"
+        )

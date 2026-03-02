@@ -4,7 +4,7 @@ Handles investment CRUD, capital activities, and portfolio analytics.
 """
 
 from rest_framework import serializers
-from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument
+from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 from decimal import Decimal
 import logging
 
@@ -476,3 +476,58 @@ class PortfolioVolatilitySerializer(serializers.Serializer):
 
 
 
+
+
+class SecondaryMarketInterestSerializer(serializers.ModelSerializer):
+    """Read serializer — used for listing / retrieving interests."""
+    buyer_email    = serializers.EmailField(source='buyer.email', read_only=True)
+    transfer_id    = serializers.IntegerField(source='transfer.id', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model  = SecondaryMarketInterest
+        fields = [
+            'id', 'transfer_id', 'buyer_email', 'amount',
+            'interest_date', 'status', 'status_display',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'buyer_email', 'transfer_id', 'status_display',
+            'created_at', 'updated_at',
+        ]
+
+
+class SecondaryMarketInterestCreateSerializer(serializers.ModelSerializer):
+    """Write serializer — used for express_interest and status updates."""
+
+    class Meta:
+        model  = SecondaryMarketInterest
+        fields = ['id', 'transfer', 'amount', 'interest_date', 'status']
+        read_only_fields = ['id']
+
+    def validate(self, data):
+        request  = self.context['request']
+        transfer = data.get('transfer') or getattr(self.instance, 'transfer', None)
+        amount   = data.get('amount')   or getattr(self.instance, 'amount', None)
+
+        if transfer:
+            # Buyer cannot be the seller
+            if transfer.from_user == request.user:
+                raise serializers.ValidationError(
+                    "You cannot express interest in your own listing."
+                )
+            # Transfer must be active
+            if transfer.status != 'PENDING':
+                raise serializers.ValidationError(
+                    "You can only express interest in PENDING listings."
+                )
+            # Amount must not exceed what the seller is offering
+            if amount and amount > transfer.transfer_amount:
+                raise serializers.ValidationError(
+                    f"Amount ({amount}) exceeds the listing amount ({transfer.transfer_amount})."
+                )
+        return data
+
+    def create(self, validated_data):
+        validated_data['buyer'] = self.context['request'].user
+        return super().create(validated_data)

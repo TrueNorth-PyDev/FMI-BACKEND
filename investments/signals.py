@@ -8,7 +8,7 @@ from django.db.models import F
 from django.utils import timezone
 from django.db import transaction
 from decimal import Decimal
-from .models import OwnershipTransfer, Investment, CapitalActivity, PerformanceSnapshot
+from .models import OwnershipTransfer, Investment, CapitalActivity, PerformanceSnapshot, SecondaryMarketInterest
 from marketplace.models import InvestorInterest
 import logging
 
@@ -431,5 +431,171 @@ def convert_investor_interest_to_investment(sender, instance, created, **kwargs)
     except Exception as e:
         logger.error(
             f"Failed to convert InvestorInterest #{instance.pk} to Investment: {e}",
+            exc_info=True,
+        )
+
+# ---------------------------------------------------------------------------
+# SecondaryMarketInterest signals
+# ---------------------------------------------------------------------------
+
+@receiver(pre_save, sender=SecondaryMarketInterest)
+def capture_secondary_interest_old_status(sender, instance, **kwargs):
+    """
+    Snapshot the current status before saving so post_save can detect
+    true PENDING → CONVERTED transitions.
+    """
+    if instance.pk:
+        try:
+            instance._old_status = SecondaryMarketInterest.objects.get(
+                pk=instance.pk
+            ).status
+        except SecondaryMarketInterest.DoesNotExist:
+            instance._old_status = None
+    else:
+        instance._old_status = None
+
+
+@receiver(post_save, sender=SecondaryMarketInterest)
+def convert_secondary_market_interest(sender, instance, created, **kwargs):
+    """
+    When a SecondaryMarketInterest transitions to CONVERTED:
+      1. Deduct `amount` from the seller's Investment
+      2. Create / top-up the buyer's Investment
+      3. Log CapitalActivity records for both sides
+      4. Mark the OwnershipTransfer as COMPLETED and is_processed=True
+    """
+    old_status = getattr(instance, '_old_status', None)
+    if instance.status != 'CONVERTED' or old_status == 'CONVERTED':
+        return  # Only fire on genuine transitions to CONVERTED
+
+    transfer = instance.transfer
+    buyer    = instance.buyer
+    seller   = transfer.from_user
+    amount   = instance.amount
+    today    = timezone.now().date()
+
+    try:
+        with transaction.atomic():
+            # -----------------------------------------------------------------
+            # 1. Locate the seller's Investment (the one being partially sold)
+            # -----------------------------------------------------------------
+            seller_investment = transfer.investment  # the specific Investment on the transfer
+
+            if seller_investment.current_value < amount:
+                logger.error(
+                    f"Cannot convert SecondaryMarketInterest #{instance.pk}: "
+                    f"seller's current_value ({seller_investment.current_value}) "
+                    f"< requested amount ({amount})"
+                )
+                return
+
+            # Deduct from seller
+            new_seller_value     = seller_investment.current_value - amount
+            new_seller_invested  = max(seller_investment.total_invested - amount, Decimal('0.00'))
+            new_seller_status    = 'EXITED' if new_seller_value == Decimal('0.00') else seller_investment.status
+
+            Investment.objects.filter(pk=seller_investment.pk).update(
+                current_value=new_seller_value,
+                total_invested=new_seller_invested,
+                status=new_seller_status,
+            )
+
+            # Log seller's capital exit — differentiate full vs partial exit
+            exit_activity_type = 'FULL_EXIT' if new_seller_status == 'EXITED' else 'PARTIAL_EXIT'
+            exit_details = (
+                f"{'Complete' if exit_activity_type == 'FULL_EXIT' else 'Partial'} secondary market sale "
+                f"to {buyer.email} — SecondaryMarketInterest #{instance.pk}"
+            )
+
+            CapitalActivity.objects.create(
+                investment=seller_investment,
+                activity_type=exit_activity_type,
+                amount=amount,  # positive = proceeds inflow to seller
+                date=today,
+                details=exit_details,
+            )
+
+            logger.info(
+                f"Seller {seller.email} investment reduced by ${amount} "
+                f"(new value: ${new_seller_value}, status: {new_seller_status}, "
+                f"activity: {exit_activity_type})"
+            )
+
+            # -----------------------------------------------------------------
+            # 2. Create / top-up the buyer's Investment
+            # -----------------------------------------------------------------
+            opportunity = transfer.investment.opportunity
+            inv_defaults = {
+                'name':            opportunity.title if opportunity else transfer.investment.name,
+                'sector':          opportunity.sector if opportunity else transfer.investment.sector,
+                'total_invested':  amount,
+                'current_value':   amount,
+                'investment_date': today,
+                'status':          'ACTIVE',
+            }
+
+            if opportunity:
+                buyer_investment, inv_created = Investment.objects.get_or_create(
+                    user=buyer,
+                    opportunity=opportunity,
+                    defaults=inv_defaults,
+                )
+            else:
+                # No linked opportunity — always create a standalone investment
+                buyer_investment = Investment.objects.create(
+                    user=buyer,
+                    **inv_defaults,
+                )
+                inv_created = True
+
+            if not inv_created:
+                # Top up existing investment
+                Investment.objects.filter(pk=buyer_investment.pk).update(
+                    total_invested=buyer_investment.total_invested + amount,
+                    current_value=buyer_investment.current_value + amount,
+                )
+                buyer_investment.refresh_from_db()
+
+                # Sync opportunity's current_raised_amount for top-up path
+                if opportunity:
+                    from marketplace.models import MarketplaceOpportunity
+                    MarketplaceOpportunity.objects.filter(pk=opportunity.pk).update(
+                        current_raised_amount=F('current_raised_amount') + amount
+                    )
+
+            # Log buyer's capital entry
+            CapitalActivity.objects.create(
+                investment=buyer_investment,
+                activity_type='INITIAL_INVESTMENT',
+                amount=-amount,  # negative = capital outflow from buyer
+                date=today,
+                details=(
+                    f"Secondary market purchase from {seller.email} — "
+                    f"SecondaryMarketInterest #{instance.pk}"
+                ),
+            )
+
+            logger.info(
+                f"Buyer {buyer.email} investment created/updated: ${amount} "
+                f"(Investment #{buyer_investment.pk})"
+            )
+
+            # -----------------------------------------------------------------
+            # 3. Mark the OwnershipTransfer as COMPLETED
+            # -----------------------------------------------------------------
+            OwnershipTransfer.objects.filter(pk=transfer.pk).update(
+                status='COMPLETED',
+                is_processed=True,
+                completion_date=timezone.now(),
+            )
+
+            logger.info(
+                f"SecondaryMarketInterest #{instance.pk} converted: "
+                f"{seller.email} → {buyer.email}, Amount: ${amount}"
+            )
+
+    except Exception as e:
+        logger.error(
+            f"Failed to convert SecondaryMarketInterest #{instance.pk}: {e}",
             exc_info=True,
         )

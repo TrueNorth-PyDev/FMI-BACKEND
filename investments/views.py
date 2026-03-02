@@ -11,7 +11,7 @@ from django.views.decorators.cache import never_cache
 from datetime import datetime, timedelta
 from django.utils import timezone
 
-from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument
+from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 from .serializers import (
     InvestmentListSerializer,
     InvestmentDetailSerializer,
@@ -29,6 +29,8 @@ from .serializers import (
     OwnershipTransferDetailSerializer,
     OwnershipTransferCreateSerializer,
     SecondaryMarketListingSerializer,
+    SecondaryMarketInterestSerializer,
+    SecondaryMarketInterestCreateSerializer,
     QuarterlyPerformanceSerializer,
     AssetAllocationSerializer,
     RebalancingRecommendationSerializer,
@@ -516,11 +518,14 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
         """
         Register buyer interest in a secondary-market listing.
 
-        Creates an InvestorInterest record (INVESTED type) against the underlying
-        MarketplaceOpportunity so the platform can track demand.
-        """
-        from marketplace.models import InvestorInterest
+        Creates a SecondaryMarketInterest record (PENDING) tied directly to the
+        OwnershipTransfer so that when the status is updated to CONVERTED the
+        system can automatically deduct from the seller and credit the buyer.
 
+        Optional request body:
+          amount (Decimal): how much the buyer wants — defaults to the full
+                            transfer_amount of the listing.
+        """
         transfer = self.get_object()
 
         # Seller cannot express interest in their own listing
@@ -530,25 +535,39 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        opportunity = transfer.investment.opportunity
-        if not opportunity:
+        if transfer.status != 'PENDING':
             return Response(
-                {"error": "This listing has no linked marketplace opportunity."},
+                {"error": "This listing is no longer available."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        interest, created = InvestorInterest.objects.get_or_create(
-            user=request.user,
-            opportunity=opportunity,
+        amount = request.data.get('amount', transfer.transfer_amount)
+
+        serializer = SecondaryMarketInterestCreateSerializer(
+            data={
+                'transfer':       transfer.pk,
+                'amount':         amount,
+                'interest_date':  timezone.now().date().isoformat(),
+            },
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        # get_or_create semantics — idempotent per buyer per listing
+        interest, created = SecondaryMarketInterest.objects.get_or_create(
+            transfer=transfer,
+            buyer=request.user,
             defaults={
-                'amount': transfer.transfer_amount,
-                'investment_date': timezone.now().date(),
+                'amount':        serializer.validated_data['amount'],
+                'interest_date': serializer.validated_data.get(
+                    'interest_date', timezone.now().date()
+                ),
             },
         )
 
         logger.info(
-            f"Secondary market interest: {request.user.email} interested in "
-            f"transfer {transfer.id} (opportunity: {opportunity.title})"
+            f"Secondary market interest: {request.user.email} → "
+            f"transfer #{transfer.id} (${interest.amount}), created={created}"
         )
 
         return Response(
@@ -556,8 +575,43 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
                 "message": "Interest registered successfully.",
                 "interest_id": interest.id,
                 "created": created,
-                "opportunity": opportunity.title,
-                "transfer_amount": str(transfer.transfer_amount),
+                "transfer_id": transfer.id,
+                "amount": str(interest.amount),
+                "status": interest.status,
+                "note": (
+                    "Update the interest status to CONVERTED to execute the transfer."
+                    if created else
+                    "You already have a registered interest for this listing."
+                ),
             },
             status=status.HTTP_200_OK,
         )
+
+
+class SecondaryMarketInterestViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for a buyer to view and manage their own SecondaryMarketInterest records.
+
+    Supported transitions via PATCH {status}:
+      PENDING  → CONVERTED  (triggers auto deduct-from-seller / credit-buyer signal)
+      PENDING  → CANCELLED
+
+    List   : GET  /secondary-market-interests/
+    Retrieve: GET  /secondary-market-interests/{id}/
+    Update  : PATCH /secondary-market-interests/{id}/   { "status": "CONVERTED" }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return SecondaryMarketInterest.objects.filter(
+            buyer=self.request.user
+        ).select_related('transfer', 'transfer__investment', 'transfer__from_user')
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return SecondaryMarketInterestCreateSerializer
+        return SecondaryMarketInterestSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(buyer=self.request.user)
+
