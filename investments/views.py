@@ -71,7 +71,9 @@ class InvestmentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Return investments for the current user."""
-        return Investment.objects.filter(user=self.request.user)
+        return Investment.objects.filter(
+            user=self.request.user
+        ).select_related('opportunity')
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -127,19 +129,22 @@ class CapitalActivityViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Return capital activities for user's investments."""
-        user_investments = Investment.objects.filter(user=self.request.user)
-        queryset = CapitalActivity.objects.filter(investment__in=user_investments)
-        
+        # Filter via JOIN (investment__user) instead of a subquery to avoid
+        # a separate IN (...) query for every request.
+        queryset = CapitalActivity.objects.filter(
+            investment__user=self.request.user
+        ).select_related('investment', 'investment__opportunity')
+
         # Filter by investment if provided
         investment_id = self.request.query_params.get('investment')
         if investment_id:
             queryset = queryset.filter(investment_id=investment_id)
-        
+
         # Filter by activity type if provided
         activity_type = self.request.query_params.get('activity_type')
         if activity_type:
             queryset = queryset.filter(activity_type=activity_type)
-        
+
         return queryset
     
     def perform_create(self, serializer):
@@ -171,8 +176,11 @@ class PortfolioAnalyticsViewSet(viewsets.ViewSet):
         # Sector performance
         sector_allocation = calculate_sector_allocation(request.user)
         
-        # Individual investment performance
-        investments = request.user.investments.filter(status__in=['ACTIVE', 'UNDERPERFORMING'])
+        # Individual investment performance — select_related avoids N+1 from
+        # get_name() / get_sector() / unrealized_gain_percentage calling opportunity.
+        investments = request.user.investments.filter(
+            status__in=['ACTIVE', 'UNDERPERFORMING']
+        ).select_related('opportunity')
         investment_performance = []
         
         for inv in investments:
@@ -378,10 +386,10 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         ).select_related('investment', 'from_user', 'to_user').order_by('-created_at')
         
         serializer = OwnershipTransferListSerializer(transfers, many=True, context={'request': request})
-        
+
         return Response({
             'pending_transfers': serializer.data,
-            'total_count': transfers.count()
+            'total_count': len(serializer.data),  # Already evaluated above — no extra COUNT query
         })
     
     @action(detail=False, methods=['get'])
@@ -398,10 +406,10 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         ).select_related('investment', 'from_user', 'to_user').order_by('-completion_date', '-created_at')
         
         serializer = OwnershipTransferListSerializer(transfers, many=True, context={'request': request})
-        
+
         return Response({
             'transfer_history': serializer.data,
-            'total_count': transfers.count()
+            'total_count': len(serializer.data),  # Already evaluated above — no extra COUNT query
         })
     
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])

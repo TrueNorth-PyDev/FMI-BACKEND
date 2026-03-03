@@ -189,12 +189,12 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
             Q(from_investor=user) | Q(to_investor=user),
             status=status_filter
         ).select_related('from_investor', 'to_investor')
-        
+
         serializer = InvestorConnectionSerializer(connections, many=True)
-        
+
         return Response({
             'connections': serializer.data,
-            'total_count': connections.count()
+            'total_count': len(serializer.data)  # already evaluated — no extra COUNT
         })
     
     @action(detail=True, methods=['patch'])
@@ -246,28 +246,30 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
         investments = Investment.objects.filter(
             user=user,
             status__in=['ACTIVE', 'UNDERPERFORMING']
-        )
-        
+        ).select_related('opportunity')  # avoids N+1 from get_sector_display()
+
         total_value = investments.aggregate(total=Sum('current_value'))['total'] or 0
-        
+        investments_count = 0
+
         # Calculate sector allocation
         sector_allocation = {}
         for investment in investments:
+            investments_count += 1
             sector = investment.get_sector_display()
             if sector not in sector_allocation:
                 sector_allocation[sector] = 0
             sector_allocation[sector] += float(investment.current_value)
-        
+
         # Convert to percentages
         sector_percentages = {}
         if total_value > 0:
             for sector, value in sector_allocation.items():
                 sector_percentages[sector] = round((value / float(total_value)) * 100, 1)
-        
+
         return {
             'total_value': float(total_value),
             'sector_allocation': sector_percentages,
-            'investments_count': investments.count()
+            'investments_count': investments_count,  # counted during iteration — no extra COUNT
         }
     
     def get_recent_investments(self, user, limit=10):
@@ -275,19 +277,19 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
         investments = Investment.objects.filter(
             user=user,
             status__in=['ACTIVE', 'UNDERPERFORMING']
-        ).order_by('-investment_date')[:limit]
-        
+        ).select_related('opportunity').order_by('-investment_date')[:limit]
+
         recent = []
         for inv in investments:
             recent.append({
-                'name': inv.name,
+                'name': inv.get_name(),
                 'sector': inv.get_sector_display(),
                 'invested': float(inv.total_invested),
                 'current_value': float(inv.current_value),
                 'performance': float(inv.unrealized_gain_percentage),
                 'date': inv.investment_date
             })
-        
+
         return recent
     
     def get_connection_status(self, current_user, target_user):

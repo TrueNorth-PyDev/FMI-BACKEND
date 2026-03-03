@@ -23,19 +23,15 @@ def create_performance_snapshot(sender, instance, created, **kwargs):
     """
     # Only create snapshot if investment has a value
     if instance.current_value and instance.current_value > 0:
-        # Check if we already have a snapshot for today
         today = timezone.now().date()
-        existing = PerformanceSnapshot.objects.filter(
+        # update_or_create is a single upsert — avoids the exists()+create
+        # two-query pattern that fired on every Investment.save().
+        snapshot, created = PerformanceSnapshot.objects.update_or_create(
             investment=instance,
-            date=today
-        ).exists()
-        
-        if not existing:
-            PerformanceSnapshot.objects.create(
-                investment=instance,
-                date=today,
-                value=instance.current_value
-            )
+            date=today,
+            defaults={'value': instance.current_value},
+        )
+        if created:
             logger.info(f"Performance snapshot created for {instance.get_name()}: ${instance.current_value}")
 
 
@@ -253,7 +249,7 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
                 total_invested=seller_investment.total_invested,
                 status=seller_investment.status,
             )
-            seller_investment.refresh_from_db()
+            # No refresh_from_db needed — we have the exact computed values above.
             
             # Log Seller Activity
             CapitalActivity.objects.create(
@@ -291,7 +287,7 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
                     current_value=buyer_investment.current_value,
                     total_invested=buyer_investment.total_invested,
                 )
-                buyer_investment.refresh_from_db()
+                # No refresh_from_db needed — values computed above are correct.
             
             # Log Buyer Activity
             CapitalActivity.objects.create(
@@ -445,12 +441,12 @@ def capture_secondary_interest_old_status(sender, instance, **kwargs):
     true PENDING → CONVERTED transitions.
     """
     if instance.pk:
-        try:
-            instance._old_status = SecondaryMarketInterest.objects.get(
-                pk=instance.pk
-            ).status
-        except SecondaryMarketInterest.DoesNotExist:
-            instance._old_status = None
+        # .values_list + .first() fetches only the status column — no need
+        # for a full row read.
+        row = SecondaryMarketInterest.objects.filter(
+            pk=instance.pk
+        ).values_list('status', flat=True).first()
+        instance._old_status = row  # None if somehow missing
     else:
         instance._old_status = None
 
@@ -524,7 +520,8 @@ def convert_secondary_market_interest(sender, instance, created, **kwargs):
             # -----------------------------------------------------------------
             # 2. Create / top-up the buyer's Investment
             # -----------------------------------------------------------------
-            opportunity = transfer.investment.opportunity
+            # seller_investment IS transfer.investment — no extra attribute lookup.
+            opportunity = seller_investment.opportunity
             inv_defaults = {
                 'name':            opportunity.title if opportunity else transfer.investment.name,
                 'sector':          opportunity.sector if opportunity else transfer.investment.sector,

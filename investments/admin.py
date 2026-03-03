@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument
+from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 
 
 @admin.register(Investment)
@@ -122,3 +122,21 @@ class TransferDocumentAdmin(admin.ModelAdmin):
     search_fields = ['transfer__investment__name']
     readonly_fields = ['uploaded_at']
 
+
+@admin.register(SecondaryMarketInterest)
+class SecondaryMarketInterestAdmin(admin.ModelAdmin):
+    """Admin interface for SecondaryMarketInterest model."""
+    list_display = ['transfer', 'buyer', 'amount', 'status', 'created_at', 'updated_at']
+    list_filter = ['status', 'created_at']
+    search_fields = ['buyer__email', 'transfer__investment__name', 'transfer__investment__opportunity__title']
+    readonly_fields = ['created_at', 'updated_at']
+
+    fieldsets = (
+        ('Interest Details', {
+            'fields': ('transfer', 'buyer', 'amount', 'status')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )

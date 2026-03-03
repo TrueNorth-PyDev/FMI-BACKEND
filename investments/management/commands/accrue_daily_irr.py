@@ -65,13 +65,14 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN MODE - No changes will be saved'))
         
-        # Get active investments with opportunities
-        investments = Investment.objects.filter(
+        # Evaluate to a list once — avoids issuing a separate COUNT query
+        # followed by a second SELECT on iteration.
+        investments = list(Investment.objects.filter(
             status__in=['ACTIVE', 'UNDERPERFORMING'],
             opportunity__isnull=False
-        ).select_related('opportunity')
-        
-        total_count = investments.count()
+        ).select_related('opportunity'))
+
+        total_count = len(investments)
         updated_count = 0
         skipped_count = 0
         error_count = 0
@@ -129,11 +130,10 @@ class Command(BaseCommand):
                         logger.debug(f"Updated current value for {investment.get_name()}: {investment.current_value}")
                         investment.save(update_fields=['current_value', 'updated_at'])
                         
-                        # Create performance snapshot (avoid duplicates)
-                        today = timezone.now().date()
+                        # Create or update today's performance snapshot (single upsert)
                         PerformanceSnapshot.objects.update_or_create(
                             investment=investment,
-                            date=today,
+                            date=today,  # already set at top of handle()
                             defaults={'value': new_value}
                         )
                         

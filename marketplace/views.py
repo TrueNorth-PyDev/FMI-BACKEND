@@ -165,25 +165,29 @@ class WatchlistViewSet(viewsets.ViewSet):
         """
         Get user's watchlist.
         """
-        # Get bookmarked opportunities
-        bookmarks = InvestmentInterest.objects.filter(
+        # Step 1: fetch the bookmarked opportunity IDs in a single lightweight query.
+        # Using values_list avoids loading full model instances just to extract a FK.
+        # Step 2: query opportunities directly with prefetch — avoids materialising
+        # a Python list from a bookmark queryset (previous code's overhead).
+        bookmarked_ids = InvestmentInterest.objects.filter(
             user=request.user,
-            interest_type='BOOKMARKED'
-        ).select_related('opportunity').order_by('-created_at')
-        
-        # Get the opportunities
-        opportunities = [bookmark.opportunity for bookmark in bookmarks]
-        
-        # Serialize
+            interest_type='BOOKMARKED',
+        ).values_list('opportunity_id', flat=True)
+
+        from .models import MarketplaceOpportunity
+        opportunities = MarketplaceOpportunity.objects.filter(
+            pk__in=bookmarked_ids,
+        ).prefetch_related('documents', 'tags').order_by('-created_at')
+
         serializer = MarketplaceOpportunityListSerializer(
             opportunities,
             many=True,
             context={'request': request}
         )
-        
+
         return Response({
             'watchlist': serializer.data,
-            'total_count': len(opportunities)
+            'total_count': len(serializer.data)
         })
 
 
