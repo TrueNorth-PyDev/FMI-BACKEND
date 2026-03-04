@@ -95,7 +95,17 @@ def sync_opportunity_investors_count_on_save(sender, instance, created, **kwargs
 def sync_opportunity_financials_on_save(sender, instance, created, **kwargs):
     """
     Sync MarketplaceOpportunity.current_raised_amount when an investment is created or updated.
+
+    NOTE: Secondary-market ownership transfers must NOT change current_raised_amount
+    because no new capital is entering the opportunity — ownership is merely moving
+    between investors.  Any code path that creates/updates a buyer's Investment as
+    part of a transfer must set  instance._skip_financial_sync = True  on the
+    Investment instance before saving so this signal skips the raised-amount update.
     """
+    # Skip raised-amount sync when explicitly flagged (e.g. ownership transfers)
+    if getattr(instance, '_skip_financial_sync', False):
+        return
+
     if not instance.opportunity_id and not getattr(instance, '_old_opportunity_id', None):
         return
 
@@ -261,26 +271,22 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
             )
             
             # 2. Create/Update Buyer's Investment
-            # Initialize with the transfer amount directly so total_invested passes
-            # MinValueValidator(0.01) on creation. If a buyer investment already
-            # exists for this opportunity, we increment its values below instead.
-            buyer_investment, created_inv = Investment.objects.get_or_create(
+            # Ownership transfers must NOT affect current_raised_amount on the
+            # opportunity — no new capital is entering, only ownership is moving.
+            # We therefore bypass the financial-sync signal by:
+            #   a) using .filter().update() (which skips signals) for existing
+            #      investments, and
+            #   b) tagging new Investment instances with _skip_financial_sync=True
+            #      so the post_save signal leaves current_raised_amount alone.
+            opportunity = seller_investment.opportunity
+            buyer_investment = Investment.objects.filter(
                 user=buyer,
-                opportunity=seller_investment.opportunity,  # Link to same opportunity
+                opportunity=opportunity,
                 name=seller_investment.name or seller_investment.get_name(),
-                defaults={
-                    'sector': seller_investment.sector or seller_investment.get_sector(),
-                    'status': 'ACTIVE',
-                    'total_invested': instance.transfer_amount,
-                    'current_value': instance.transfer_amount,
-                    'investment_date': timezone.now().date(),
-                    'manager': seller_investment.manager,
-                    'fund_vintage': seller_investment.fund_vintage,
-                }
-            )
+            ).first()
 
-            # Update Buyer Values (only if the investment already existed)
-            if not created_inv:
+            if buyer_investment:
+                # Top up existing investment — use .update() to bypass signals
                 buyer_investment.total_invested += instance.transfer_amount
                 buyer_investment.current_value += instance.transfer_amount
                 Investment.objects.filter(pk=buyer_investment.pk).update(
@@ -288,6 +294,22 @@ def handle_transfer_completion(sender, instance, created, **kwargs):
                     total_invested=buyer_investment.total_invested,
                 )
                 # No refresh_from_db needed — values computed above are correct.
+            else:
+                # Create new investment and flag it to skip financial sync
+                buyer_investment = Investment(
+                    user=buyer,
+                    opportunity=opportunity,
+                    name=seller_investment.name or seller_investment.get_name(),
+                    sector=seller_investment.sector or seller_investment.get_sector(),
+                    status='ACTIVE',
+                    total_invested=instance.transfer_amount,
+                    current_value=instance.transfer_amount,
+                    investment_date=timezone.now().date(),
+                    manager=seller_investment.manager,
+                    fund_vintage=seller_investment.fund_vintage,
+                )
+                buyer_investment._skip_financial_sync = True
+                buyer_investment.save()
             
             # Log Buyer Activity
             CapitalActivity.objects.create(
@@ -520,45 +542,45 @@ def convert_secondary_market_interest(sender, instance, created, **kwargs):
             # -----------------------------------------------------------------
             # 2. Create / top-up the buyer's Investment
             # -----------------------------------------------------------------
-            # seller_investment IS transfer.investment — no extra attribute lookup.
+            # Secondary-market transfers must NOT change current_raised_amount on
+            # the opportunity — no new capital enters, only existing ownership
+            # moves between investors.  We therefore:
+            #   • use .filter().update() (signal-bypassing) for existing investments
+            #   • tag new Investment instances with _skip_financial_sync=True
+            # so sync_opportunity_financials_on_save leaves the raised amount alone.
             opportunity = seller_investment.opportunity
-            inv_defaults = {
-                'name':            opportunity.title if opportunity else transfer.investment.name,
-                'sector':          opportunity.sector if opportunity else transfer.investment.sector,
-                'total_invested':  amount,
-                'current_value':   amount,
-                'investment_date': today,
-                'status':          'ACTIVE',
-            }
+            inv_name   = opportunity.title  if opportunity else transfer.investment.name
+            inv_sector = opportunity.sector if opportunity else transfer.investment.sector
 
             if opportunity:
-                buyer_investment, inv_created = Investment.objects.get_or_create(
+                buyer_investment = Investment.objects.filter(
                     user=buyer,
                     opportunity=opportunity,
-                    defaults=inv_defaults,
-                )
+                ).first()
             else:
-                # No linked opportunity — always create a standalone investment
-                buyer_investment = Investment.objects.create(
-                    user=buyer,
-                    **inv_defaults,
-                )
-                inv_created = True
+                buyer_investment = None
 
-            if not inv_created:
-                # Top up existing investment
+            if buyer_investment:
+                # Top up existing investment — use .update() to bypass signals
                 Investment.objects.filter(pk=buyer_investment.pk).update(
                     total_invested=buyer_investment.total_invested + amount,
                     current_value=buyer_investment.current_value + amount,
                 )
                 buyer_investment.refresh_from_db()
-
-                # Sync opportunity's current_raised_amount for top-up path
-                if opportunity:
-                    from marketplace.models import MarketplaceOpportunity
-                    MarketplaceOpportunity.objects.filter(pk=opportunity.pk).update(
-                        current_raised_amount=F('current_raised_amount') + amount
-                    )
+            else:
+                # Create new investment and flag it to skip financial sync
+                buyer_investment = Investment(
+                    user=buyer,
+                    opportunity=opportunity,  # may be None for standalone investments
+                    name=inv_name,
+                    sector=inv_sector,
+                    total_invested=amount,
+                    current_value=amount,
+                    investment_date=today,
+                    status='ACTIVE',
+                )
+                buyer_investment._skip_financial_sync = True
+                buyer_investment.save()
 
             # Log buyer's capital entry
             CapitalActivity.objects.create(

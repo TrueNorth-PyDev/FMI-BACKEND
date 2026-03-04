@@ -128,6 +128,8 @@ Automatic daily growth of investment values based on opportunity target IRR.
 | POST | `/{id}/approve/` | *(Admin)* Approve pending transfer |
 | POST | `/{id}/complete/` | *(Admin)* Complete approved transfer |
 
+**Transfer Fee**: Currently **0%** (waived). `transfer_fee` is always `0.00` and `net_amount` equals `transfer_amount`.
+
 ---
 
 ## 🏪 Marketplace (Primary)
@@ -225,6 +227,7 @@ PATCH /api/investments/secondary-market-interests/{id}/
    - `FULL_EXIT` capital activity if seller's entire position is wiped out (investment marked `EXITED`)
 2. **Buyer's Investment created** (or topped-up) for the same amount, with an `INITIAL_INVESTMENT` capital activity
 3. **OwnershipTransfer** marked `COMPLETED` and `is_processed = True`
+4. **`current_raised_amount` is NOT modified** — no new capital enters the opportunity; only existing ownership moves between investors
 
 To **cancel** an interest: `PATCH /{id}/` `{ "status": "CANCELLED" }`
 

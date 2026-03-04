@@ -25,7 +25,7 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 ### 🔄 Ownership Transfers
 - **Digital Workflow**: End-to-end management of ownership transfers
 - **Status Tracking**: Draft → Pending → Approved → Completed
-- **Fee Calculation**: Automated 2.5% transfer fee processing
+- **Fee Calculation**: Transfer fee is currently **0%** (waived — configurable in `OwnershipTransfer.save()`)
 - **Document Generation**: Automated transfer paperwork
 
 ### 🏪 Marketplace
@@ -48,6 +48,7 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
      - Creates / tops-up buyer's investment with an `INITIAL_INVESTMENT` capital activity
      - Marks the `OwnershipTransfer` as `COMPLETED`
 - **Full Exit Detection**: Logs a `FULL_EXIT` activity (instead of `PARTIAL_EXIT`) when a buyout wipes the seller's entire position
+- **Raised-Amount Integrity**: Secondary market transfers do **not** modify `MarketplaceOpportunity.current_raised_amount` — no new capital enters the opportunity; only existing ownership changes hands
 
 ### 👥 Investor Network
 - **Directory**: Connect with other accredited investors

@@ -381,7 +381,7 @@ class OwnershipTransfer(models.Model):
         max_digits=15,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text="Transfer fee (2.5%)"
+        help_text="Transfer fee (0%)"
     )
     net_amount = models.DecimalField(
         max_digits=15,
@@ -425,9 +425,9 @@ class OwnershipTransfer(models.Model):
     
     def save(self, *args, **kwargs):
         """Calculate fees and net amount before saving."""
-        # Calculate transfer fee (2.5%)
-        self.transfer_fee = self.transfer_amount * Decimal('0.025')
-        self.net_amount = self.transfer_amount - self.transfer_fee
+        # Transfer fee is currently 0%
+        self.transfer_fee = Decimal('0.00')
+        self.net_amount = self.transfer_amount
         
         # Set estimated completion date if not set
         if not self.estimated_completion_date and self.status == 'PENDING':

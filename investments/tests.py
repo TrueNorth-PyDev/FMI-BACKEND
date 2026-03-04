@@ -413,3 +413,195 @@ class SecondaryMarketInterestConversionTests(APITestCase):
         self.assertEqual(count, 1, 'Only one buyer investment should exist')
 
 
+from marketplace.models import MarketplaceOpportunity
+
+
+class TransferFeeTests(TestCase):
+    """
+    Verify that the transfer fee on OwnershipTransfer is 0
+    and that net_amount equals transfer_amount.
+    """
+
+    def setUp(self):
+        self.seller = User.objects.create_user(
+            username='fee_seller', email='fee_seller@example.com',
+            password='Password123!', is_email_verified=True
+        )
+        self.buyer = User.objects.create_user(
+            username='fee_buyer', email='fee_buyer@example.com',
+            password='Password123!', is_email_verified=True
+        )
+        self.investment = Investment.objects.create(
+            user=self.seller, name='Fee Test Fund', sector='TECHNOLOGY',
+            total_invested=Decimal('100000.00'), current_value=Decimal('100000.00'),
+            investment_date=timezone.now().date(),
+        )
+
+    def test_transfer_fee_is_zero(self):
+        """Transfer fee must be 0 (fee waived)."""
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.investment,
+            from_user=self.seller,
+            to_user=self.buyer,
+            transfer_amount=Decimal('20000.00'),
+            transfer_type='PARTIAL',
+            percentage=20,
+            status='DRAFT',
+            reason='Test fee',
+        )
+        self.assertEqual(transfer.transfer_fee, Decimal('0.00'))
+
+    def test_net_amount_equals_transfer_amount_when_fee_is_zero(self):
+        """net_amount must equal transfer_amount when fee is 0."""
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.investment,
+            from_user=self.seller,
+            to_user=self.buyer,
+            transfer_amount=Decimal('20000.00'),
+            transfer_type='PARTIAL',
+            percentage=20,
+            status='DRAFT',
+            reason='Test net amount',
+        )
+        self.assertEqual(transfer.net_amount, transfer.transfer_amount)
+
+
+class TransferDoesNotAffectRaisedAmountTests(TestCase):
+    """
+    Verify that completing an ownership transfer (via OwnershipTransfer signal
+    or SecondaryMarketInterest conversion) does NOT change the associated
+    MarketplaceOpportunity.current_raised_amount.
+
+    No new capital enters the opportunity during a transfer — only existing
+    ownership moves between investors.
+    """
+
+    def setUp(self):
+        self.seller = User.objects.create_user(
+            username='raised_seller', email='raised_seller@example.com',
+            password='Password123!', is_email_verified=True
+        )
+        self.buyer = User.objects.create_user(
+            username='raised_buyer', email='raised_buyer@example.com',
+            password='Password123!', is_email_verified=True
+        )
+        self.opportunity = MarketplaceOpportunity.objects.create(
+            title='Opportunity A',
+            sector='TECHNOLOGY',
+            target_raise_amount=Decimal('1000000.00'),
+            current_raised_amount=Decimal('200000.00'),
+            min_investment=Decimal('1000.00'),
+            status='ACTIVE',
+        )
+        self.seller_investment = Investment.objects.create(
+            user=self.seller,
+            opportunity=self.opportunity,
+            name=self.opportunity.title,
+            sector=self.opportunity.sector,
+            total_invested=Decimal('100000.00'),
+            current_value=Decimal('100000.00'),
+            investment_date=timezone.now().date(),
+        )
+        # Snapshot the raised amount AFTER the seller's investment is created
+        # (creating an investment legitimately increments current_raised_amount)
+        self.opportunity.refresh_from_db()
+        self.raised_before = self.opportunity.current_raised_amount
+
+    # ------------------------------------------------------------------
+    # OwnershipTransfer path
+    # ------------------------------------------------------------------
+
+    def test_ownership_transfer_completion_does_not_change_raised_amount(self):
+        """Completing an OwnershipTransfer must not alter current_raised_amount."""
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.seller_investment,
+            from_user=self.seller,
+            to_user=self.buyer,
+            transfer_amount=Decimal('40000.00'),
+            transfer_type='PARTIAL',
+            percentage=40,
+            status='PENDING',
+            reason='Liquidity',
+        )
+        transfer.status = 'COMPLETED'
+        transfer.save()
+
+        self.opportunity.refresh_from_db()
+        self.assertEqual(
+            self.opportunity.current_raised_amount, self.raised_before,
+            'current_raised_amount must not change after an ownership transfer'
+        )
+
+    # ------------------------------------------------------------------
+    # SecondaryMarketInterest path — new buyer
+    # ------------------------------------------------------------------
+
+    def test_secondary_interest_conversion_does_not_change_raised_amount(self):
+        """Converting a SecondaryMarketInterest must not alter current_raised_amount."""
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.seller_investment,
+            from_user=self.seller,
+            transfer_amount=Decimal('30000.00'),
+            transfer_type='PARTIAL',
+            percentage=30,
+            status='PENDING',
+            reason='Secondary sale',
+        )
+        interest = SecondaryMarketInterest.objects.create(
+            transfer=transfer,
+            buyer=self.buyer,
+            amount=Decimal('30000.00'),
+        )
+        interest.status = 'CONVERTED'
+        interest.save()
+
+        self.opportunity.refresh_from_db()
+        self.assertEqual(
+            self.opportunity.current_raised_amount, self.raised_before,
+            'current_raised_amount must not change after a secondary market conversion'
+        )
+
+    # ------------------------------------------------------------------
+    # SecondaryMarketInterest path — buyer top-up
+    # ------------------------------------------------------------------
+
+    def test_secondary_interest_topup_does_not_change_raised_amount(self):
+        """
+        If the buyer already has an investment and a secondary conversion tops
+        it up, current_raised_amount must still be unchanged.
+        """
+        # Give the buyer an existing investment (this legitimately bumps raised)
+        Investment.objects.create(
+            user=self.buyer,
+            opportunity=self.opportunity,
+            name=self.opportunity.title,
+            sector=self.opportunity.sector,
+            total_invested=Decimal('10000.00'),
+            current_value=Decimal('10000.00'),
+            investment_date=timezone.now().date(),
+        )
+        self.opportunity.refresh_from_db()
+        raised_after_buyer_joins = self.opportunity.current_raised_amount
+
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.seller_investment,
+            from_user=self.seller,
+            transfer_amount=Decimal('20000.00'),
+            transfer_type='PARTIAL',
+            percentage=20,
+            status='PENDING',
+            reason='Top-up test',
+        )
+        interest = SecondaryMarketInterest.objects.create(
+            transfer=transfer,
+            buyer=self.buyer,
+            amount=Decimal('20000.00'),
+        )
+        interest.status = 'CONVERTED'
+        interest.save()
+
+        self.opportunity.refresh_from_db()
+        self.assertEqual(
+            self.opportunity.current_raised_amount, raised_after_buyer_joins,
+            'current_raised_amount must not change when buyer investment is topped up via transfer'
+        )
