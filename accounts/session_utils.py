@@ -95,9 +95,10 @@ def cleanup_old_sessions(user, max_sessions=10):
     from .models import UserSession
     
     sessions = UserSession.objects.filter(user=user).order_by('-last_activity')
-    
+
     if sessions.count() > max_sessions:
-        # Delete oldest sessions
-        old_sessions = sessions[max_sessions:]
-        deleted_count = old_sessions.delete()[0]
+        # Collect PKs of sessions beyond the limit first — Django forbids
+        # calling .delete() directly on a sliced queryset (LIMIT/OFFSET).
+        ids_to_delete = list(sessions[max_sessions:].values_list('pk', flat=True))
+        deleted_count, _ = UserSession.objects.filter(pk__in=ids_to_delete).delete()
         logger.info(f"Cleaned up {deleted_count} old sessions for {user.email}")
