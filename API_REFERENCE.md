@@ -90,6 +90,25 @@ Authorization: Bearer <access_token>
 
 ---
 
+---
+
+## 🛠 Admin API (Staff Only)
+**Base URL**: `/api/admin/`
+
+REST API to power the custom PrivCap Hub admin panel. **Requires `is_staff=True`**.
+
+| Category | Endpoints (Examples) | Description |
+|----------|----------------------|-------------|
+| **Dashboard** | `GET /dashboard/` | Platform-wide KPIs (users, AUM, transfers) |
+| **Users** | `GET /users/`, `POST /users/{id}/suspend/` | Full user management, session termination (`/users/{id}/terminate-sessions/`), activity logs |
+| **Opportunities** | `GET /opportunities/`, `POST /opportunities/{id}/publish/` | Edit opportunities, toggle features, manage documents |
+| **Investments** | `GET /investments/`, `POST /investments/{id}/capital-activities/` | Overview of all investments and manual capital activity tracking |
+| **Transfers** | `POST /transfers/{id}/approve/`, `POST /transfers/{id}/complete/` | Approve, complete or reject pending ownership transfers |
+| **Analytics** | `GET /analytics/users/`, `GET /analytics/aum/` | Staff-only charts (user growth, AUM trend, transfer volume) |
+| **System** | `GET /activity-log/`, `GET /audit-log/` | Platform-wide security logs |
+
+---
+
 ## 🔧 Management Commands
 
 ### Daily IRR Accrual

@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'core',
     'investments',
     'marketplace',
+    'admin_api',
     'django_rq',
 ]
 

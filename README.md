@@ -50,7 +50,13 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 - **Full Exit Detection**: Logs a `FULL_EXIT` activity (instead of `PARTIAL_EXIT`) when a buyout wipes the seller's entire position
 - **Raised-Amount Integrity**: Secondary market transfers do **not** modify `MarketplaceOpportunity.current_raised_amount` — no new capital enters the opportunity; only existing ownership changes hands
 
-### 👥 Investor Network
+### � Custom Admin API
+- **Dedicated Admin Panel**: `/api/admin/` powers a custom front-end to rival Django's default admin.
+- **RESTful Controls**: Staff-only endpoints to manage users, verify emails, suspend/unlock accounts, and terminate sessions.
+- **Lifecycle Management**: Approve ownership transfers, publish marketplace opportunities, and record capital activities directly via API.
+- **Analytics & Logs**: Platform-wide KPIs, user analytics, AUM trends, and an immutable security audit trail.
+
+### �👥 Investor Network
 - **Directory**: Connect with other accredited investors
 - **Profiles**: Customizable investor profiles with privacy controls
 - **Connections**: Send/accept connection requests

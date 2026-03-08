@@ -23,6 +23,7 @@ urlpatterns = [
     path('api/accounts/', include('accounts.urls')),
     path('api/', include('investments.urls')),
     path('api/marketplace/', include('marketplace.urls')),
+    path('api/admin/', include('admin_api.urls')),
 ]
 
 # Serve media files using custom view (works in production with WSGI)
