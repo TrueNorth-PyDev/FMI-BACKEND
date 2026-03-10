@@ -11,6 +11,7 @@ from .user_views import AdminUserViewSet
 from .marketplace_views import AdminOpportunityViewSet
 from .investment_views import AdminInvestmentViewSet
 from .transfer_views import AdminTransferViewSet, AdminSecondaryInterestViewSet
+from .investor_views import AdminInvestorProfileViewSet, AdminInvestorInterestViewSet
 from .analytics_views import (
     AdminUserAnalyticsView,
     AdminAUMAnalyticsView,
@@ -32,6 +33,8 @@ router.register(r'opportunities', AdminOpportunityViewSet, basename='admin-oppor
 router.register(r'investments', AdminInvestmentViewSet, basename='admin-investment')
 router.register(r'transfers', AdminTransferViewSet, basename='admin-transfer')
 router.register(r'secondary-interests', AdminSecondaryInterestViewSet, basename='admin-secondary-interest')
+router.register(r'investor-profiles', AdminInvestorProfileViewSet, basename='admin-investor-profile')
+router.register(r'investor-interests', AdminInvestorInterestViewSet, basename='admin-investor-interest')
 
 urlpatterns = [
     # --- Dashboard ---

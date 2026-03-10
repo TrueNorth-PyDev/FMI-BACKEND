@@ -259,11 +259,65 @@ class AdminSecondaryInterestSerializer(serializers.ModelSerializer):
 
 class AdminInvestorInterestSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_name = serializers.SerializerMethodField()
     opportunity_title = serializers.CharField(source='opportunity.title', read_only=True)
+    opportunity_id = serializers.IntegerField(source='opportunity.id', read_only=True)
 
     class Meta:
         model = InvestorInterest
         fields = [
-            'id', 'user_email', 'opportunity_title',
-            'amount', 'investment_date', 'status', 'created_at',
+            'id', 'user', 'user_email', 'user_name',
+            'opportunity', 'opportunity_id', 'opportunity_title',
+            'amount', 'investment_date', 'status',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_user_name(self, obj):
+        return obj.user.get_full_name()
+
+
+class AdminInvestorInterestUpdateSerializer(serializers.ModelSerializer):
+    """Used by admin to update status or amount of an interest."""
+    class Meta:
+        model = InvestorInterest
+        fields = ['status', 'amount', 'investment_date']
+
+
+# ---------------------------------------------------------------------------
+# Investor Profile serializers
+# ---------------------------------------------------------------------------
+
+class AdminInvestorProfileSerializer(serializers.ModelSerializer):
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+    user_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InvestorProfile
+        fields = [
+            'id', 'user_id', 'user_email', 'user_name',
+            'display_name', 'investor_category', 'bio', 'investment_philosophy',
+            'location_city', 'location_country',
+            'min_investment', 'max_investment',
+            'preferred_sectors', 'preferred_stages', 'risk_profile',
+            'is_public', 'is_accepting_connections',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'user_id', 'user_email', 'user_name', 'created_at', 'updated_at']
+
+    def get_user_name(self, obj):
+        return obj.user.get_full_name()
+
+
+class AdminInvestorProfileUpdateSerializer(serializers.ModelSerializer):
+    """Used by admin to edit any field on an investor profile."""
+    class Meta:
+        model = InvestorProfile
+        fields = [
+            'display_name', 'investor_category', 'bio', 'investment_philosophy',
+            'location_city', 'location_country',
+            'min_investment', 'max_investment',
+            'preferred_sectors', 'preferred_stages', 'risk_profile',
+            'is_public', 'is_accepting_connections',
         ]

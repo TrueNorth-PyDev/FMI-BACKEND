@@ -20,8 +20,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 
-from accounts.models import UserSession, UserActivity
-from marketplace.models import MarketplaceOpportunity
+from accounts.models import UserSession, UserActivity, InvestorProfile
+from marketplace.models import MarketplaceOpportunity, InvestorInterest
 from investments.models import Investment, OwnershipTransfer, CapitalActivity
 
 User = get_user_model()
@@ -620,3 +620,188 @@ class AdminSystemTests(TestCase):
         self.assertEqual(res.status_code, 200)
         for r in res.json()['results']:
             self.assertIn(r['activity_type'], ['LOGIN', 'LOGOUT', 'PASSWORD_CHANGE', '2FA_ENABLED', '2FA_DISABLED'])
+
+
+# ---------------------------------------------------------------------------
+# Investor Profile tests
+# ---------------------------------------------------------------------------
+
+class AdminInvestorProfileTests(TestCase):
+    """Admin can list, retrieve, patch any user's InvestorProfile."""
+
+    def setUp(self):
+        self.admin = make_user('admin@test.com', is_staff=True)
+        self.client = authed_client(self.admin)
+        self.investor = make_user('investor@test.com')
+        # Profile auto-created by signal
+        self.profile = InvestorProfile.objects.get(user=self.investor)
+
+    def test_list_investor_profiles(self):
+        res = self.client.get('/api/admin/investor-profiles/')
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(res.json()['count'], 1)
+
+    def test_get_profile_detail(self):
+        res = self.client.get(f'/api/admin/investor-profiles/{self.profile.id}/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['user_email'], 'investor@test.com')
+
+    def test_get_profile_by_user(self):
+        res = self.client.get(f'/api/admin/investor-profiles/by-user/{self.investor.id}/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['user_email'], 'investor@test.com')
+
+    def test_get_profile_by_invalid_user_returns_404(self):
+        res = self.client.get('/api/admin/investor-profiles/by-user/99999/')
+        self.assertEqual(res.status_code, 404)
+
+    def test_patch_investor_profile_bio(self):
+        res = self.client.patch(
+            f'/api/admin/investor-profiles/{self.profile.id}/',
+            {'bio': 'Updated bio via admin panel.', 'display_name': 'New Display'},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.bio, 'Updated bio via admin panel.')
+
+    def test_patch_investor_category(self):
+        res = self.client.patch(
+            f'/api/admin/investor-profiles/{self.profile.id}/',
+            {'investor_category': 'ANGEL'},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.investor_category, 'ANGEL')
+
+    def test_patch_preferred_sectors(self):
+        res = self.client.patch(
+            f'/api/admin/investor-profiles/{self.profile.id}/',
+            {'preferred_sectors': ['TECHNOLOGY', 'FINTECH']},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertIn('TECHNOLOGY', self.profile.preferred_sectors)
+
+    def test_filter_profiles_by_is_public(self):
+        self.profile.is_public = False
+        self.profile.save(update_fields=['is_public'])
+        res = self.client.get('/api/admin/investor-profiles/?is_public=false')
+        self.assertEqual(res.status_code, 200)
+        for r in res.json()['results']:
+            self.assertFalse(r['is_public'])
+
+    def test_non_admin_cannot_access_profiles(self):
+        investor_client = authed_client(self.investor)
+        res = investor_client.get('/api/admin/investor-profiles/')
+        self.assertEqual(res.status_code, 403)
+
+
+# ---------------------------------------------------------------------------
+# Investor Interest tests
+# ---------------------------------------------------------------------------
+
+class AdminInvestorInterestTests(TestCase):
+    """Admin manages InvestorInterest (opportunity pledges) across all users."""
+
+    def setUp(self):
+        self.admin = make_user('admin@test.com', is_staff=True)
+        self.client = authed_client(self.admin)
+        self.investor = make_user('inv2@test.com')
+        self.opp = make_opportunity(title='Interest Opp')
+        self.interest = InvestorInterest.objects.create(
+            user=self.investor,
+            opportunity=self.opp,
+            amount=Decimal('25000.00'),
+            investment_date='2025-06-01',
+            status='PENDING',
+        )
+
+    def test_list_investor_interests(self):
+        res = self.client.get('/api/admin/investor-interests/')
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(res.json()['count'], 1)
+
+    def test_get_interest_detail(self):
+        res = self.client.get(f'/api/admin/investor-interests/{self.interest.id}/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['user_email'], 'inv2@test.com')
+        self.assertEqual(data['opportunity_title'], 'Interest Opp')
+
+    def test_filter_by_user_id(self):
+        res = self.client.get(f'/api/admin/investor-interests/?user_id={self.investor.id}')
+        self.assertEqual(res.status_code, 200)
+        for r in res.json()['results']:
+            self.assertEqual(r['user_email'], 'inv2@test.com')
+
+    def test_filter_by_status(self):
+        res = self.client.get('/api/admin/investor-interests/?status=PENDING')
+        self.assertEqual(res.status_code, 200)
+        for r in res.json()['results']:
+            self.assertEqual(r['status'], 'PENDING')
+
+    def test_filter_by_opportunity_id(self):
+        res = self.client.get(f'/api/admin/investor-interests/?opportunity_id={self.opp.id}')
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(res.json()['count'], 1)
+
+    def test_patch_interest_amount(self):
+        res = self.client.patch(
+            f'/api/admin/investor-interests/{self.interest.id}/',
+            {'amount': '30000.00'},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.interest.refresh_from_db()
+        self.assertEqual(self.interest.amount, Decimal('30000.00'))
+
+    def test_cancel_interest(self):
+        res = self.client.post(f'/api/admin/investor-interests/{self.interest.id}/cancel/')
+        self.assertEqual(res.status_code, 200)
+        self.interest.refresh_from_db()
+        self.assertEqual(self.interest.status, 'CANCELLED')
+
+    def test_cancel_already_cancelled_fails(self):
+        self.interest.status = 'CANCELLED'
+        self.interest.save(update_fields=['status'])
+        res = self.client.post(f'/api/admin/investor-interests/{self.interest.id}/cancel/')
+        self.assertEqual(res.status_code, 400)
+
+    def test_convert_interest(self):
+        res = self.client.post(f'/api/admin/investor-interests/{self.interest.id}/convert/')
+        self.assertEqual(res.status_code, 200)
+        self.interest.refresh_from_db()
+        self.assertEqual(self.interest.status, 'CONVERTED')
+
+    def test_convert_already_converted_fails(self):
+        self.interest.status = 'CONVERTED'
+        self.interest.save(update_fields=['status'])
+        res = self.client.post(f'/api/admin/investor-interests/{self.interest.id}/convert/')
+        self.assertEqual(res.status_code, 400)
+
+    def test_create_interest_on_behalf_of_user(self):
+        data = {
+            'user': self.investor.id,
+            'opportunity': self.opp.id,
+            'amount': '15000.00',
+            'investment_date': '2025-09-01',
+            'status': 'PENDING',
+        }
+        res = self.client.post('/api/admin/investor-interests/', data, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            InvestorInterest.objects.filter(user=self.investor, amount=Decimal('15000.00')).exists()
+        )
+
+    def test_delete_interest(self):
+        res = self.client.delete(f'/api/admin/investor-interests/{self.interest.id}/')
+        self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(InvestorInterest.objects.filter(id=self.interest.id).exists())
+
+    def test_non_admin_cannot_access_interests(self):
+        investor_client = authed_client(self.investor)
+        res = investor_client.get('/api/admin/investor-interests/')
+        self.assertEqual(res.status_code, 403)
