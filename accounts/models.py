@@ -27,9 +27,9 @@ class User(AbstractUser):
     
     # Investment profile
     INVESTOR_TYPE_CHOICES = [
-        ('ACCREDITED', 'Accredited Investor'),
-        ('QUALIFIED', 'Qualified Purchaser'),
+        ('INDIVIDUAL', 'Individual Investor'),
         ('INSTITUTIONAL', 'Institutional Investor'),
+        ('COLLECTIVE', 'Collective Investor'),
     ]
     
     RISK_TOLERANCE_CHOICES = [

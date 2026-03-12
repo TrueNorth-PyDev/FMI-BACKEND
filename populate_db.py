@@ -31,7 +31,7 @@ investor1 = User.objects.create_user(
     last_name='Investor',
     phone_number='+1234567890',
     country='United States',
-    investor_type='ACCREDITED',
+    investor_type='INDIVIDUAL',
     risk_tolerance='MODERATE',
     is_email_verified=True
 )
@@ -44,7 +44,7 @@ investor2 = User.objects.create_user(
     last_name='Capital',
     phone_number='+0987654321',
     country='United Kingdom',
-    investor_type='QUALIFIED',
+    investor_type='COLLECTIVE',
     risk_tolerance='AGGRESSIVE',
     is_email_verified=True
 )
