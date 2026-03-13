@@ -27,11 +27,11 @@ class User(AbstractUser):
     
     # Investment profile
     INVESTOR_TYPE_CHOICES = [
-        ('INDIVIDUAL', 'Individual Investor'),
         ('INSTITUTIONAL', 'Institutional Investor'),
         ('COLLECTIVE', 'Collective Investor'),
+        ('QUALIFIED', 'Qualified Investor'),
+        ('RETAIL', 'Retail Investor'),
     ]
-    
     RISK_TOLERANCE_CHOICES = [
         ('CONSERVATIVE', 'Conservative'),
         ('MODERATE', 'Moderate'),
