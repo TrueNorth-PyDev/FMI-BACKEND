@@ -44,24 +44,10 @@ class Command(BaseCommand):
         today = timezone.now().date()
 
         # ---------------------------------------------------------------
-        # Idempotency guard — prevent running more than once per day.
-        # This protects against multiple Railway deployments in a single day
-        # each triggering an immediate accrual via setup_periodic_tasks.
-        # We use PerformanceSnapshot as the sentinel: if any snapshot exists
-        # for today, the accrual has already run.
+        # Per-investment idempotency handles multiple triggers in a day.
+        # It loops through the difference in days from the last snapshot
+        # until `today` ensuring all gaps are filled retroactively.
         # ---------------------------------------------------------------
-        if not dry_run and not force:
-            already_ran = PerformanceSnapshot.objects.filter(date=today).exists()
-            if already_ran:
-                msg = (
-                    f'Daily IRR accrual already completed for {today}. '
-                    'Skipping. Use --force to override.'
-                )
-                self.stdout.write(self.style.WARNING(msg))
-                logger.info(msg)
-                return
-
-
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN MODE - No changes will be saved'))
         
@@ -91,55 +77,76 @@ class Command(BaseCommand):
                     skipped_count += 1
                     continue
                 
+                # Determine the last recorded snapshot date
+                last_snapshot = investment.performance_snapshots.order_by('-date').first()
+                if last_snapshot:
+                    last_date = last_snapshot.date
+                else:
+                    last_date = investment.investment_date if investment.investment_date else investment.created_at.date()
+
+                days_to_accrue = (today - last_date).days
+                if days_to_accrue <= 0 and not force:
+                    # Already up to date
+                    continue
+
                 # Calculate daily IRR using compound interest formula
                 # Daily Rate = (1 + Annual Rate)^(1/365) - 1
                 annual_rate = Decimal(str(investment.target_irr / 100))  # Convert % to decimal
                 days_in_year = Decimal('365')
-                
-                # Calculate compound daily rate
                 daily_rate = (1 + annual_rate) ** (Decimal('1') / days_in_year) - 1
                 
-                # Apply growth to current value
                 old_value = investment.current_value
-                raw_new_value = investment.current_value * (1 + daily_rate)
-                
-                # Round to 2 decimal places/cents to avoid "max digits" validation error
-                # caused by high-precision calculation results (e.g., 28 decimal places)
-                new_value = raw_new_value.quantize(Decimal('0.01'))
-                
-                growth = new_value - old_value
+                new_value = old_value
                 
                 if dry_run:
                     self.stdout.write(
                         f'  [{investment.get_name()}] '
-                        f'${old_value:,.2f} → ${new_value:,.2f} '
-                        f'(+${growth:,.2f}, {investment.target_irr}% IRR)'
+                        f'Would accrue {days_to_accrue} days. '
+                        f'Current ${old_value:,.2f} ({investment.target_irr}% IRR)'
                     )
                 else:
                     # Use transaction to ensure atomicity
                     with transaction.atomic():
-                        # Ensure value doesn't exceed max digits (prevent validation errors)
-                        if new_value > Decimal('999999999999999999.99'):
-                            logger.warning(f"Skipping update for {investment.get_name()}: Value {new_value} exceeds max digits")
-                            self.stdout.write(self.style.WARNING(f"  ⚠ Value overflow for {investment.get_name()}"))
-                            error_count += 1
-                            continue
+                        overflow = False
+                        # Retroactively fill in missed days
+                        for i in range(1, days_to_accrue + 1):
+                            current_accrual_date = last_date + timezone.timedelta(days=i)
+                            
+                            raw_new_value = new_value * (1 + daily_rate)
+                            next_val = raw_new_value.quantize(Decimal('0.01'))
+                            
+                            # Ensure value doesn't exceed max digits
+                            if next_val > Decimal('999999999999999999.99'):
+                                logger.warning(f"Skipping update for {investment.get_name()}: Value {next_val} exceeds max digits on {current_accrual_date}")
+                                self.stdout.write(self.style.WARNING(f"  ⚠ Value overflow for {investment.get_name()} on {current_accrual_date}"))
+                                error_count += 1
+                                overflow = True
+                                break
 
+                            new_value = next_val
+                            
+                            # Create or update today's/past performance snapshot
+                            PerformanceSnapshot.objects.update_or_create(
+                                investment=investment,
+                                date=current_accrual_date,
+                                defaults={'value': new_value}
+                            )
+                        
+                        if overflow and i == 1:
+                            # If overflow hit on the very first day, abort
+                            continue
+                            
+                        growth = new_value - old_value
+                        
                         # Update investment value
                         investment.current_value = new_value
                         logger.debug(f"Updated current value for {investment.get_name()}: {investment.current_value}")
                         investment.save(update_fields=['current_value', 'updated_at'])
                         
-                        # Create or update today's performance snapshot (single upsert)
-                        PerformanceSnapshot.objects.update_or_create(
-                            investment=investment,
-                            date=today,  # already set at top of handle()
-                            defaults={'value': new_value}
-                        )
-                        
                         self.stdout.write(
                             self.style.SUCCESS(
                                 f'  ✓ {investment.get_name()}: '
+                                f'Accrued {days_to_accrue} days. '
                                 f'${old_value:,.2f} → ${new_value:,.2f} '
                                 f'(+${growth:,.2f})'
                             )
@@ -147,7 +154,7 @@ class Command(BaseCommand):
                         
                         logger.info(
                             f'IRR accrued for {investment.get_name()}: '
-                            f'${old_value} → ${new_value} (+${growth})'
+                            f'${old_value} → ${new_value} (+${growth}) over {days_to_accrue} days.'
                         )
                 
                 updated_count += 1
