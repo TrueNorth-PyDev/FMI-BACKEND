@@ -41,3 +41,22 @@ class ClientIpTests(TestCase):
             api_settings.reload()
             self.assertEqual(get_client_ip(request), '203.0.113.9')  # the spoofed 6.6.6.6 is ignored
         api_settings.reload()
+
+
+class ApiDocsTests(TestCase):
+    def test_docs_pages_use_pinned_ui_assets(self):
+        """Unpinned @latest UI bundles broke ReDoc (v3 dropped the global Redoc object)."""
+        from django.test import RequestFactory
+        from django.urls import resolve
+
+        def render(url):
+            request = RequestFactory().get(url)
+            response = resolve(url).func(request)
+            response.render()
+            self.assertEqual(response.status_code, 200, url)
+            return response.content.decode()
+
+        for url in ('/api/docs/', '/api/swagger/'):
+            self.assertNotIn('@latest', render(url), url)
+        self.assertIn('redoc@2.', render('/api/docs/'))
+        self.assertIn('openapi', render('/api/schema/'))

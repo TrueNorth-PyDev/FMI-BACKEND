@@ -463,6 +463,12 @@ SPECTACULAR_SETTINGS = {
         {'url': 'https://peaceful-possibility-production.up.railway.app', 'description': 'Production server'},
     ],
     
+    # UI assets are pinned: drf-spectacular defaults to @latest, and ReDoc 3 no
+    # longer defines the global `Redoc` its page calls, which renders a blank page.
+    'REDOC_DIST': 'https://cdn.jsdelivr.net/npm/redoc@2.5.4',
+    'SWAGGER_UI_DIST': 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.3',
+    'SWAGGER_UI_FAVICON_HREF': 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.3/favicon-32x32.png',
+
     # UI customization
     'SWAGGER_UI_SETTINGS': {
         'deepLinking': True,
