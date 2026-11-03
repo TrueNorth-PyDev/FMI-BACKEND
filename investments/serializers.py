@@ -3,6 +3,8 @@ Serializers for the investments app.
 Handles investment CRUD, capital activities, and portfolio analytics.
 """
 
+from typing import Optional
+
 from rest_framework import serializers
 from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 from decimal import Decimal
@@ -12,30 +14,15 @@ logger = logging.getLogger('investments')
 
 
 class CapitalActivitySerializer(serializers.ModelSerializer):
-    """Serializer for capital activities."""
+    """Read-only serializer for capital activities (recorded by staff or by the system)."""
     activity_type_display = serializers.CharField(source='get_activity_type_display', read_only=True)
     
     class Meta:
         model = CapitalActivity
         fields = ['id', 'investment', 'activity_type', 'activity_type_display', 
                   'amount', 'date', 'details', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = fields
         depth = 1
-    
-    def validate_amount(self, value):
-        """Validate amount based on activity type."""
-        activity_type = self.initial_data.get('activity_type')
-        
-        if activity_type in ['INITIAL_INVESTMENT', 'CAPITAL_CALL']:
-            # These should be negative (outflows)
-            if value > 0:
-                return -abs(value)
-        elif activity_type in ['DISTRIBUTION', 'PARTIAL_EXIT']:
-            # These should be positive (inflows)
-            if value < 0:
-                return abs(value)
-        
-        return value
 
 
 class PerformanceSnapshotSerializer(serializers.ModelSerializer):
@@ -65,10 +52,10 @@ class InvestmentListSerializer(serializers.ModelSerializer):
                   'current_value', 'total_invested', 'unrealized_gain', 
                   'unrealized_gain_percentage', 'investment_date', 'moic', 'opportunity_id']
     
-    def get_name(self, obj):
+    def get_name(self, obj) -> str:
         return obj.get_name()
     
-    def get_sector(self, obj):
+    def get_sector(self, obj) -> str:
         return obj.get_sector()
 
 
@@ -97,119 +84,16 @@ class InvestmentDetailSerializer(serializers.ModelSerializer):
                   'opportunity_id', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_name(self, obj):
+    def get_name(self, obj) -> str:
         return obj.get_name()
     
-    def get_sector(self, obj):
+    def get_sector(self, obj) -> str:
         return obj.get_sector()
     
-    def get_calculated_irr(self, obj):
+    def get_calculated_irr(self, obj) -> float:
         """Calculate and return IRR from capital activities."""
-        try:
-            irr = obj.calculate_irr()
-            return float(irr) if irr else 0.0
-        except:
-            return 0.0
-
-
-class InvestmentCreateUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for creating/updating investments."""
-    
-    class Meta:
-        model = Investment
-        fields = ['opportunity', 'name', 'status', 'sector', 'total_invested', 'current_value',
-                  'fund_size', 'unfunded_commitment', 'manager', 'investment_date',
-                  'expected_horizon_years', 'fund_vintage', 'progress_percentage']
-        extra_kwargs = {
-            'opportunity': {'required': False, 'allow_null': True}
-        }
-    
-    def validate(self, attrs):
-        """Validate investment data."""
-        if attrs.get('current_value') and attrs.get('total_invested'):
-            if attrs['current_value'] < 0:
-                raise serializers.ValidationError({"current_value": "Current value cannot be negative."})
-            if attrs['total_invested'] <= 0:
-                raise serializers.ValidationError({"total_invested": "Total invested must be greater than zero."})
-        
-        if attrs.get('unfunded_commitment', Decimal('0.00')) < 0:
-            raise serializers.ValidationError({"unfunded_commitment": "Unfunded commitment cannot be negative."})
-        
-        if attrs.get('progress_percentage'):
-            if not (0 <= attrs['progress_percentage'] <= 100):
-                raise serializers.ValidationError({"progress_percentage": "Progress must be between 0 and 100."})
-        
-        return attrs
-    
-    def create(self, validated_data):
-        """Create investment with user from context."""
-        validated_data['user'] = self.context['request'].user
-        investment = Investment.objects.create(**validated_data)
-        logger.info(f"Investment created: {investment.get_name()} by {investment.user.email}")
-        return investment
-
-
-class PortfolioSummarySerializer(serializers.Serializer):
-    """Serializer for portfolio summary data."""
-    total_value = serializers.DecimalField(max_digits=15, decimal_places=2)
-    total_invested = serializers.DecimalField(max_digits=15, decimal_places=2)
-    unrealized_gains = serializers.DecimalField(max_digits=15, decimal_places=2)
-    unrealized_gains_percentage = serializers.DecimalField(max_digits=10, decimal_places=2)
-    average_irr = serializers.DecimalField(max_digits=10, decimal_places=2)
-    num_investments = serializers.IntegerField()
-
-
-class SectorAllocationSerializer(serializers.Serializer):
-    """Serializer for sector allocation data."""
-    sector = serializers.CharField()
-    sector_display = serializers.CharField()
-    amount = serializers.DecimalField(max_digits=15, decimal_places=2)
-    percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
-
-
-class RiskMetricsSerializer(serializers.Serializer):
-    """Serializer for risk metrics data."""
-    portfolio_beta = serializers.DecimalField(max_digits=5, decimal_places=2)
-    sharpe_ratio = serializers.DecimalField(max_digits=5, decimal_places=2)
-    max_drawdown = serializers.DecimalField(max_digits=5, decimal_places=2)
-    value_at_risk = serializers.DecimalField(max_digits=15, decimal_places=2)
-
-
-class PerformanceDataSerializer(serializers.Serializer):
-    """Serializer for performance time series data."""
-    date = serializers.DateField()
-    value = serializers.DecimalField(max_digits=15, decimal_places=2)
-
-
-class ReturnsAnalysisSerializer(serializers.Serializer):
-    """Serializer for returns analysis data."""
-    realized_gains = serializers.DecimalField(max_digits=15, decimal_places=2)
-    unrealized_gains = serializers.DecimalField(max_digits=15, decimal_places=2)
-    total_return = serializers.DecimalField(max_digits=15, decimal_places=2)
-    total_invested = serializers.DecimalField(max_digits=15, decimal_places=2)
-    total_current_value = serializers.DecimalField(max_digits=15, decimal_places=2)
-
-
-class ReturnAttributionSerializer(serializers.Serializer):
-    """Serializer for return attribution by sector."""
-    sector = serializers.CharField()
-    sector_display = serializers.CharField()
-    invested = serializers.DecimalField(max_digits=15, decimal_places=2)
-    current_value = serializers.DecimalField(max_digits=15, decimal_places=2)
-    gain = serializers.DecimalField(max_digits=15, decimal_places=2)
-    gain_percentage = serializers.DecimalField(max_digits=10, decimal_places=2)
-
-
-class DistributionHistorySerializer(serializers.Serializer):
-    """Serializer for distribution history."""
-    id = serializers.IntegerField()
-    investment_id = serializers.IntegerField()
-    investment_name = serializers.CharField()
-    amount = serializers.DecimalField(max_digits=15, decimal_places=2)
-    date = serializers.DateField()
-    details = serializers.CharField()
-    activity_type = serializers.CharField()
-    activity_type_display = serializers.CharField()
+        irr = obj.calculate_irr()  # returns 0 on any calculation failure
+        return float(irr) if irr else 0.0
 
 
 class TransferDocumentSerializer(serializers.ModelSerializer):
@@ -222,17 +106,19 @@ class TransferDocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'document_type', 'document_type_display', 'file', 'file_url', 'uploaded_at']
         read_only_fields = ['id', 'uploaded_at']
     
-    def get_file_url(self, obj):
-        """Get full URL for the file."""
+    def get_file_url(self, obj) -> Optional[str]:
+        """Transfer documents are private: link to the authenticated download endpoint."""
         request = self.context.get('request')
         if obj.file and request:
-            return request.build_absolute_uri(obj.file.url)
+            from django.urls import reverse
+            url = reverse('investments:transfer-download-document', args=[obj.transfer_id, obj.pk])
+            return request.build_absolute_uri(url)
         return None
 
 
 class OwnershipTransferListSerializer(serializers.ModelSerializer):
     """Serializer for ownership transfer list view."""
-    investment_name = serializers.CharField(source='investment.name', read_only=True)
+    investment_name = serializers.CharField(source='investment.get_name', read_only=True)
     from_user_email = serializers.CharField(source='from_user.email', read_only=True)
     to_user_email = serializers.CharField(source='to_user.email', read_only=True, allow_null=True)
     recipient = serializers.SerializerMethodField()
@@ -246,7 +132,7 @@ class OwnershipTransferListSerializer(serializers.ModelSerializer):
                   'transfer_amount', 'transfer_fee', 'net_amount', 'status', 'status_display',
                   'initiated_date', 'estimated_completion_date']
     
-    def get_recipient(self, obj):
+    def get_recipient(self, obj) -> str:
         """Get recipient display name."""
         if obj.to_user:
             return obj.to_user.email
@@ -255,7 +141,7 @@ class OwnershipTransferListSerializer(serializers.ModelSerializer):
 
 class OwnershipTransferDetailSerializer(serializers.ModelSerializer):
     """Serializer for ownership transfer detail view."""
-    investment_name = serializers.CharField(source='investment.name', read_only=True)
+    investment_name = serializers.CharField(source='investment.get_name', read_only=True)
     from_user_email = serializers.CharField(source='from_user.email', read_only=True)
     to_user_email = serializers.CharField(source='to_user.email', read_only=True, allow_null=True)
     recipient = serializers.SerializerMethodField()
@@ -274,7 +160,7 @@ class OwnershipTransferDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'from_user', 'transfer_fee', 'net_amount', 'initiated_date',
                            'created_at', 'updated_at']
     
-    def get_recipient(self, obj):
+    def get_recipient(self, obj) -> str:
         """Get recipient display name."""
         if obj.to_user:
             return obj.to_user.email
@@ -282,7 +168,13 @@ class OwnershipTransferDetailSerializer(serializers.ModelSerializer):
 
 
 class OwnershipTransferCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating ownership transfers."""
+    """
+    Serializer for creating and editing ownership transfers.
+
+    Owners may only create a transfer as DRAFT or PENDING (submitted); approval
+    and completion are staff actions in the admin API.
+    """
+    status = serializers.ChoiceField(choices=['DRAFT', 'PENDING'], required=False, default='DRAFT')
     
     class Meta:
         model = OwnershipTransfer
@@ -290,12 +182,22 @@ class OwnershipTransferCreateSerializer(serializers.ModelSerializer):
                   'percentage', 'transfer_amount', 'reason', 'status']
     
     def validate(self, attrs):
-        """Validate transfer data."""
+        """Validate transfer data, falling back to stored values on partial updates."""
         request = self.context.get('request')
-        investment = attrs.get('investment')
+        instance = self.instance
+        
+        def value(field):
+            if field in attrs:
+                return attrs[field]
+            return getattr(instance, field, None) if instance else None
+        
+        investment = value('investment')
+        transfer_type = value('transfer_type')
+        transfer_amount = value('transfer_amount')
+        to_user = value('to_user')
         
         # Verify user owns the investment
-        if investment.user != request.user:
+        if investment.user_id != request.user.id:
             raise serializers.ValidationError({"investment": "You do not own this investment."})
         
         # Verify investment is active
@@ -303,28 +205,38 @@ class OwnershipTransferCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"investment": "Cannot transfer inactive investments."})
         
         # Cannot transfer to self
-        if attrs.get('to_user') == request.user:
+        if to_user is not None and to_user.pk == request.user.pk:
             raise serializers.ValidationError({"to_user": "Cannot transfer to yourself."})
         
         # Validate percentage for partial transfers
-        if attrs.get('transfer_type') == 'PARTIAL':
-            if not attrs.get('percentage'):
+        if transfer_type == 'PARTIAL':
+            percentage = value('percentage')
+            if not percentage:
                 raise serializers.ValidationError({"percentage": "Percentage is required for partial transfers."})
-            if not (0 < attrs['percentage'] <= 100):
+            if not (0 < percentage <= 100):
                 raise serializers.ValidationError({"percentage": "Percentage must be between 0 and 100."})
+        elif transfer_type == 'FULL':
+            # A full transfer always moves the whole position
+            attrs['percentage'] = Decimal('100.00')
         
         # Validate transfer amount
-        if attrs.get('transfer_amount') <= 0:
+        if transfer_amount is None or transfer_amount <= 0:
             raise serializers.ValidationError({"transfer_amount": "Transfer amount must be greater than zero."})
+        if transfer_amount > investment.current_value:
+            raise serializers.ValidationError({
+                "transfer_amount": f"Transfer amount exceeds the investment's current value (${investment.current_value})."
+            })
         
-        # Check for duplicate pending transfers
-        existing_transfer = OwnershipTransfer.objects.filter(
+        # Check for duplicate open transfers
+        open_transfers = OwnershipTransfer.objects.filter(
             investment=investment,
             from_user=request.user,
             status__in=['DRAFT', 'PENDING', 'APPROVED']
-        ).exists()
+        )
+        if instance:
+            open_transfers = open_transfers.exclude(pk=instance.pk)
         
-        if existing_transfer:
+        if open_transfers.exists():
             raise serializers.ValidationError(
                 "You already have a pending transfer for this investment. "
                 "Please complete or cancel it before creating a new one."
@@ -337,11 +249,10 @@ class OwnershipTransferCreateSerializer(serializers.ModelSerializer):
         validated_data['from_user'] = self.context['request'].user
         transfer = OwnershipTransfer.objects.create(**validated_data)
         logger.info(
-            f"Ownership transfer created: {transfer.investment.name} by {transfer.from_user.email}, "
+            f"Ownership transfer created: {transfer.investment.get_name()} by {transfer.from_user.email}, "
             f"Status: {transfer.status}"
         )
         return transfer
-
 
 
 class SecondaryMarketListingSerializer(serializers.ModelSerializer):
@@ -404,16 +315,16 @@ class SecondaryMarketListingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_investment_name(self, obj):
+    def get_investment_name(self, obj) -> str:
         return obj.investment.get_name()
 
-    def get_investment_sector(self, obj):
+    def get_investment_sector(self, obj) -> str:
         return obj.investment.get_sector()
 
-    def get_investment_sector_display(self, obj):
+    def get_investment_sector_display(self, obj) -> str:
         return obj.investment.get_sector_display()
 
-    def get_seller_display_name(self, obj):
+    def get_seller_display_name(self, obj) -> str:
         """Return seller's first name, or a masked email (e.g. j***@example.com)."""
         user = obj.from_user
         if user.first_name:
@@ -423,7 +334,7 @@ class SecondaryMarketListingSerializer(serializers.ModelSerializer):
         masked = local[0] + '***'
         return f"{masked}@{domain}"
 
-    def get_is_partial(self, obj):
+    def get_is_partial(self, obj) -> bool:
         return obj.transfer_type == 'PARTIAL'
 
 
@@ -434,48 +345,6 @@ class QuarterlyPerformanceSerializer(serializers.Serializer):
     quarter = serializers.CharField()
     portfolio_return = serializers.FloatField()
     benchmark_return = serializers.FloatField()
-
-
-class AssetAllocationSerializer(serializers.Serializer):
-    """Serializer for asset allocation data."""
-    asset_class = serializers.CharField()
-    current_value = serializers.FloatField()
-    current_percentage = serializers.FloatField()
-    target_percentage = serializers.IntegerField()
-    difference = serializers.FloatField()
-
-
-class RebalancingRecommendationSerializer(serializers.Serializer):
-    """Serializer for rebalancing recommendations."""
-    asset_class = serializers.CharField()
-    status = serializers.CharField()
-    action = serializers.CharField()
-    current_percentage = serializers.FloatField()
-    target_percentage = serializers.IntegerField()
-
-
-class ConcentrationRiskSerializer(serializers.Serializer):
-    """Serializer for concentration risk metrics."""
-    top_3_concentration = serializers.FloatField()
-    top_5_concentration = serializers.FloatField()
-    risk_level = serializers.CharField()
-
-
-class StressTestScenarioSerializer(serializers.Serializer):
-    """Serializer for stress test scenarios."""
-    scenario = serializers.CharField()
-    impact_percentage = serializers.FloatField()
-    expected_loss = serializers.FloatField()
-    recovery_months = serializers.IntegerField()
-
-
-class PortfolioVolatilitySerializer(serializers.Serializer):
-    """Serializer for portfolio volatility metrics."""
-    volatility = serializers.FloatField()
-    risk_level = serializers.CharField()
-
-
-
 
 
 class SecondaryMarketInterestSerializer(serializers.ModelSerializer):
@@ -498,26 +367,38 @@ class SecondaryMarketInterestSerializer(serializers.ModelSerializer):
 
 
 class SecondaryMarketInterestCreateSerializer(serializers.ModelSerializer):
-    """Write serializer — used for express_interest and status updates."""
+    """
+    Write serializer for a buyer's interest. Buyers set the listing, amount and
+    date; the status is managed by staff (CONVERTED executes the purchase) or by
+    the buyer's cancel action.
+    """
 
     class Meta:
         model  = SecondaryMarketInterest
         fields = ['id', 'transfer', 'amount', 'interest_date', 'status']
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'status']
 
     def validate(self, data):
         request  = self.context['request']
-        transfer = data.get('transfer') or getattr(self.instance, 'transfer', None)
-        amount   = data.get('amount')   or getattr(self.instance, 'amount', None)
+        instance = self.instance
+        if instance is not None:
+            if instance.status != 'PENDING':
+                raise serializers.ValidationError(
+                    f"This interest is {instance.status.lower()} and can no longer be changed."
+                )
+            if 'transfer' in data and data['transfer'].pk != instance.transfer_id:
+                raise serializers.ValidationError({"transfer": "The listing of an interest cannot be changed."})
+        transfer = data.get('transfer') or getattr(instance, 'transfer', None)
+        amount   = data.get('amount')   or getattr(instance, 'amount', None)
 
         if transfer:
             # Buyer cannot be the seller
-            if transfer.from_user == request.user:
+            if transfer.from_user_id == request.user.id:
                 raise serializers.ValidationError(
                     "You cannot express interest in your own listing."
                 )
-            # Transfer must be active
-            if transfer.status != 'PENDING':
+            # Transfer must be an open, public listing
+            if transfer.status != 'PENDING' or transfer.to_user_id is not None:
                 raise serializers.ValidationError(
                     "You can only express interest in PENDING listings."
                 )
@@ -525,6 +406,12 @@ class SecondaryMarketInterestCreateSerializer(serializers.ModelSerializer):
             if amount and amount > transfer.transfer_amount:
                 raise serializers.ValidationError(
                     f"Amount ({amount}) exceeds the listing amount ({transfer.transfer_amount})."
+                )
+            if instance is None and SecondaryMarketInterest.objects.filter(
+                transfer=transfer, buyer=request.user
+            ).exists():
+                raise serializers.ValidationError(
+                    "You already have a registered interest for this listing."
                 )
         return data
 

@@ -2,7 +2,6 @@
 Test session tracking functionality
 """
 import requests
-import json
 
 BASE_URL = "http://localhost:8000/api"
 
@@ -20,7 +19,7 @@ response = requests.post(f"{BASE_URL}/accounts/login/", json=INVESTOR1)
 if response.status_code == 200:
     data = response.json()
     access_token = data['tokens']['access']
-    print(f"   [PASS] Login successful")
+    print("   [PASS] Login successful")
     print(f"   Token: {access_token[:30]}...")
     
     # 2. List sessions
@@ -71,9 +70,9 @@ if response.status_code == 200:
                 current_marker = " (CURRENT)" if session['is_current'] else ""
                 print(f"   - {session['device_name']} from {session['ip_address']}{current_marker}")
         else:
-            print(f"   [FAIL] Could not list sessions")
+            print("   [FAIL] Could not list sessions")
     else:
-        print(f"   [FAIL] Second login failed")
+        print("   [FAIL] Second login failed")
     
 else:
     print(f"   [FAIL] Login failed: {response.status_code}")

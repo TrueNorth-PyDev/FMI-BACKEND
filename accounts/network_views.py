@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Q, Sum, Count
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema, OpenApiParameter
+from decimal import Decimal, InvalidOperation
 
 from .models import InvestorProfile, InvestorConnection, User
 from .serializers import (
@@ -17,9 +17,13 @@ from .serializers import (
     InvestorConnectionSerializer,
 )
 from investments.models import Investment
+from core.utils import parse_positive_int
 import logging
 
 logger = logging.getLogger('accounts')
+
+ACTIVE_STATUSES = ['ACTIVE', 'UNDERPERFORMING']
+
 
 
 class InvestorNetworkViewSet(viewsets.ViewSet):
@@ -30,14 +34,21 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
     """
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = InvestorListSerializer  # Default serializer
+    lookup_value_regex = r'\d+'  # non-numeric IDs 404 instead of raising ValueError
     
     @action(detail=False, methods=['get'])
     def directory(self, request):
         """
         Get investor directory with search and filters.
         """
-        # Base queryset - only public profiles
-        queryset = InvestorProfile.objects.filter(is_public=True).select_related('user')
+        # Base queryset - only public profiles, with portfolio totals annotated
+        # in the same query (the serializer would otherwise run 3 queries per row).
+        active = Q(user__investments__status__in=ACTIVE_STATUSES)
+        queryset = InvestorProfile.objects.filter(is_public=True).select_related('user').annotate(
+            active_investments_count=Count('user__investments', filter=active),
+            active_total_invested=Sum('user__investments__total_invested', filter=active),
+            active_current_value=Sum('user__investments__current_value', filter=active),
+        ).order_by('-created_at')
         
         # Search by name, bio, or sectors
         search = request.query_params.get('search')
@@ -56,7 +67,11 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
         # Filter by min investment
         min_investment = request.query_params.get('min_investment')
         if min_investment:
-            queryset = queryset.filter(min_investment__gte=min_investment)
+            try:
+                queryset = queryset.filter(min_investment__gte=Decimal(min_investment))
+            except InvalidOperation:
+                return Response({"error": "min_investment must be a number."},
+                                status=status.HTTP_400_BAD_REQUEST)
         
         # Filter by location
         location = request.query_params.get('location')
@@ -67,15 +82,27 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
             )
         
         # Pagination
-        page_size = int(request.query_params.get('page_size', 20))
-        page = int(request.query_params.get('page', 1))
+        page_size = parse_positive_int(request.query_params.get('page_size'), 20, maximum=100)
+        page = parse_positive_int(request.query_params.get('page'), 1)
         start = (page - 1) * page_size
         end = start + page_size
         
         total_count = queryset.count()
-        investors = queryset[start:end]
+        investors = list(queryset[start:end])
         
-        serializer = InvestorListSerializer(investors, many=True, context={'request': request})
+        # One query for the requester's connection status with everyone on this page
+        user_ids = [profile.user_id for profile in investors]
+        connection_map = {}
+        for conn in InvestorConnection.objects.filter(
+            Q(from_investor=request.user, to_investor_id__in=user_ids) |
+            Q(to_investor=request.user, from_investor_id__in=user_ids)
+        ).only('from_investor_id', 'to_investor_id', 'status'):
+            other_id = conn.to_investor_id if conn.from_investor_id == request.user.id else conn.from_investor_id
+            connection_map[other_id] = conn.status.lower()
+        
+        serializer = InvestorListSerializer(
+            investors, many=True, context={'request': request, 'connection_map': connection_map}
+        )
         
         return Response({
             'investors': serializer.data,
@@ -127,8 +154,8 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
         
         # Get target investor
         try:
-            to_investor = User.objects.get(id=to_investor_id)
-        except User.DoesNotExist:
+            to_investor = User.objects.get(id=to_investor_id, is_active=True)
+        except (User.DoesNotExist, ValueError, TypeError):
             return Response(
                 {"error": "Investor not found."},
                 status=status.HTTP_404_NOT_FOUND
@@ -182,7 +209,7 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
         Get user's connections.
         """
         user = request.user
-        status_filter = request.query_params.get('status', 'ACCEPTED')
+        status_filter = request.query_params.get('status', 'ACCEPTED').upper()
         
         # Get connections where user is either sender or receiver
         connections = InvestorConnection.objects.filter(
@@ -211,9 +238,14 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
                 {"error": "Status must be ACCEPTED or REJECTED."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        if connection.status != 'PENDING':
+            return Response(
+                {"error": f"Connection has already been {connection.status.lower()}."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         connection.status = new_status
-        connection.save()
+        connection.save(update_fields=['status', 'updated_at'])
         
         serializer = InvestorConnectionSerializer(connection)
         logger.info(f"Connection {pk} updated to {new_status} by {request.user.email}")
@@ -245,38 +277,36 @@ class InvestorNetworkViewSet(viewsets.ViewSet):
         """Calculate portfolio overview with sector allocation."""
         investments = Investment.objects.filter(
             user=user,
-            status__in=['ACTIVE', 'UNDERPERFORMING']
+            status__in=ACTIVE_STATUSES
         ).select_related('opportunity')  # avoids N+1 from get_sector_display()
 
-        total_value = investments.aggregate(total=Sum('current_value'))['total'] or 0
+        # Single pass over the rows: totals, count and per-sector sums
+        total_value = 0.0
         investments_count = 0
-
-        # Calculate sector allocation
         sector_allocation = {}
         for investment in investments:
             investments_count += 1
+            value = float(investment.current_value)
+            total_value += value
             sector = investment.get_sector_display()
-            if sector not in sector_allocation:
-                sector_allocation[sector] = 0
-            sector_allocation[sector] += float(investment.current_value)
+            sector_allocation[sector] = sector_allocation.get(sector, 0.0) + value
 
-        # Convert to percentages
         sector_percentages = {}
         if total_value > 0:
             for sector, value in sector_allocation.items():
-                sector_percentages[sector] = round((value / float(total_value)) * 100, 1)
+                sector_percentages[sector] = round((value / total_value) * 100, 1)
 
         return {
-            'total_value': float(total_value),
+            'total_value': total_value,
             'sector_allocation': sector_percentages,
-            'investments_count': investments_count,  # counted during iteration — no extra COUNT
+            'investments_count': investments_count,
         }
     
     def get_recent_investments(self, user, limit=10):
         """Get recent investments with performance."""
         investments = Investment.objects.filter(
             user=user,
-            status__in=['ACTIVE', 'UNDERPERFORMING']
+            status__in=ACTIVE_STATUSES
         ).select_related('opportunity').order_by('-investment_date')[:limit]
 
         recent = []

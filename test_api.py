@@ -3,7 +3,6 @@ Comprehensive API Testing Script - Simulates Postman Collection
 Tests all endpoints with populated database
 """
 import requests
-import json
 from datetime import datetime
 
 BASE_URL = "http://localhost:8000/api"
@@ -39,14 +38,14 @@ def test_profile_endpoints(token):
     print("\n=== PROFILE ENDPOINTS ===")
     
     # Get profile
-    response = session.get(f"{BASE_URL}/accounts/profile/")
-    print_test("GET /accounts/profile/", response.status_code == 200, 
+    response = session.get(f"{BASE_URL}/accounts/account/profile/")
+    print_test("GET /accounts/account/profile/", response.status_code == 200, 
                f"User: {response.json().get('email', 'N/A')}")
     
     # Update profile
-    response = session.patch(f"{BASE_URL}/accounts/profile/", 
+    response = session.patch(f"{BASE_URL}/accounts/account/profile/", 
                             json={"phone_number": "+1111111111"})
-    print_test("PATCH /accounts/profile/", response.status_code == 200)
+    print_test("PATCH /accounts/account/profile/", response.status_code == 200)
 
 def test_investment_endpoints():
     print("\n=== INVESTMENT ENDPOINTS ===")
@@ -69,8 +68,8 @@ def test_investment_endpoints():
         print_test("GET /portfolio/overview/", False)
     
     # Get asset allocation
-    response = session.get(f"{BASE_URL}/portfolio/asset-allocation/")
-    print_test("GET /portfolio/asset-allocation/", response.status_code == 200)
+    response = session.get(f"{BASE_URL}/portfolio/asset_allocation/")
+    print_test("GET /portfolio/asset_allocation/", response.status_code == 200)
 
 def test_transfer_endpoints():
     print("\n=== TRANSFER ENDPOINTS ===")
@@ -121,20 +120,20 @@ def test_investor_network():
     print("\n=== INVESTOR NETWORK ===")
     
     # Get investor directory
-    response = session.get(f"{BASE_URL}/accounts/investor-network/directory/")
+    response = session.get(f"{BASE_URL}/accounts/network/directory/")
     if response.status_code == 200:
         count = response.json().get('total_count', 0)
-        print_test("GET /investor-network/directory/", True, f"Found {count} investors")
+        print_test("GET /accounts/network/directory/", True, f"Found {count} investors")
     else:
-        print_test("GET /investor-network/directory/", False)
+        print_test("GET /accounts/network/directory/", False)
     
     # Get connections
-    response = session.get(f"{BASE_URL}/accounts/investor-network/connections/")
+    response = session.get(f"{BASE_URL}/accounts/network/connections/")
     if response.status_code == 200:
         count = response.json().get('total_count', 0)
-        print_test("GET /investor-network/connections/", True, f"Connections: {count}")
+        print_test("GET /accounts/network/connections/", True, f"Connections: {count}")
     else:
-        print_test("GET /investor-network/connections/", False)
+        print_test("GET /accounts/network/connections/", False)
 
 def test_admin_endpoints():
     print("\n=== ADMIN ENDPOINTS (Transfer Approval) ===")
@@ -147,19 +146,19 @@ def test_admin_endpoints():
         print_test("Admin Login", True)
         
         # Get pending transfers
-        response = session.get(f"{BASE_URL}/transfers/pending/")
-        if response.status_code == 200 and response.json().get('total_count', 0) > 0:
-            transfers = response.json()['pending_transfers']
+        response = session.get(f"{BASE_URL}/admin/transfers/", params={'status': 'PENDING'})
+        if response.status_code == 200 and response.json().get('count', 0) > 0:
+            transfers = response.json()['results']
             transfer_id = transfers[0]['id']
             
             # Approve transfer
-            approve_response = session.post(f"{BASE_URL}/transfers/{transfer_id}/approve/")
-            print_test(f"POST /transfers/{transfer_id}/approve/", 
+            approve_response = session.post(f"{BASE_URL}/admin/transfers/{transfer_id}/approve/")
+            print_test(f"POST /admin/transfers/{transfer_id}/approve/", 
                       approve_response.status_code == 200)
             
-            # Complete transfer (triggers signal)
-            complete_response = session.post(f"{BASE_URL}/transfers/{transfer_id}/complete/")
-            print_test(f"POST /transfers/{transfer_id}/complete/", 
+            # Complete transfer (moves the position to the recipient)
+            complete_response = session.post(f"{BASE_URL}/admin/transfers/{transfer_id}/complete/")
+            print_test(f"POST /admin/transfers/{transfer_id}/complete/", 
                       complete_response.status_code == 200,
                       "Signal should process asset transfer")
         else:

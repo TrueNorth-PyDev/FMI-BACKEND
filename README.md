@@ -7,15 +7,18 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 ### 🔐 Authentication & Security
 - **JWT Authentication** with access (15m) and refresh (7d) tokens
 - **Email Verification** using 6-digit OTP
-- **Account Lockout** protection (5 failed attempts, 30m lockout)
+- **Account Lockout** protection (5 failed attempts, 15m lockout)
+- **OTP brute-force protection** (5 wrong guesses invalidate a code) and rate limiting on auth endpoints
+- **Revocable sessions**: revoking a session signs it out immediately (refresh token blacklisted, access tokens rejected); changing the password signs out other sessions
+- **Least privilege for staff**: only superusers can grant staff rights or modify staff accounts
 - **Password Policies** enforcement
 - **Comprehensive Logging** of security events
 
 ### 📊 Portfolio Management
-- **Investment Tracking**: Monitor private equity, VC, and real estate investments
+- **Investment Tracking**: Monitor private equity, VC, and real estate investments (read-only for investors; created by pledge conversion, transfers or staff)
 - **Opportunity Integration**: Link investments to marketplace opportunities for automatic data synchronization
 - **Daily IRR Accrual**: Automatic daily growth of investment values based on target IRR (compound interest)
-  - **Idempotency Guard**: Runs at most once per calendar day — safe across multiple Railway deploys. Use `--force` to override manually.
+  - **Idempotent with backfill**: each investment tracks `last_accrued_date`; a run accrues every missed day and nothing more — safe across multiple Railway deploys.
 - **Dual IRR Metrics**: Track both target IRR (from opportunity) and calculated IRR (from capital activities)
 - **Analytics Dashboard**: Real-time performance metrics, sector allocation, and risk analysis
 - **Capital Activities**: Track contributions, distributions, partial exits, and full exits
@@ -24,7 +27,7 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 
 ### 🔄 Ownership Transfers
 - **Digital Workflow**: End-to-end management of ownership transfers
-- **Status Tracking**: Draft → Pending → Approved → Completed
+- **Status Tracking**: Draft → Pending → Approved (staff) → Completed (staff)
 - **Fee Calculation**: Transfer fee is currently **0%** (waived — configurable in `OwnershipTransfer.save()`)
 - **Document Generation**: Automated transfer paperwork
 
@@ -32,7 +35,7 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 - **Opportunity Discovery**: Browse and search with detailed metrics (Cash Flow, Team, Capacity)
 - **Watchlist**: Track interesting deals
 - **Due Diligence**: Access virtual data rooms and secure documents
-- **Investor Interest**: Express interest in opportunities; auto-converts to `Investment` when status is set to `CONVERTED`
+- **Investor Interest**: Pledge to opportunities (min investment and remaining capacity enforced); staff convert a pledge into an `Investment`
 - **Automated Lifecycle**:
     - `NEW` ➔ `ACTIVE` after 24 hours
     - `ACTIVE` ➔ `CLOSING_SOON` at 90% funding
@@ -42,21 +45,22 @@ A secure, production-ready Django REST Framework backend for **PrivCap Hub**, a 
 ### 🔁 Secondary Marketplace
 - **Browse Listings**: View all `PENDING` ownership transfers listed by other investors
 - **Buyer Interest (Two-Step Flow)**:
-  1. `POST /{id}/express_interest/` → creates a `SecondaryMarketInterest` record (`PENDING`). No money moves.
-  2. `PATCH /secondary-market-interests/{id}/` `{ "status": "CONVERTED" }` → atomically executes the transfer:
-     - Deducts amount from seller's investment (`PARTIAL_EXIT` or `FULL_EXIT` capital activity)
+  1. `POST /api/secondary-market/{id}/express_interest/` → creates a `SecondaryMarketInterest` record (`PENDING`). No money moves.
+  2. Staff `PATCH /api/admin/secondary-interests/{id}/` `{ "status": "CONVERTED" }` → atomically executes the transfer:
+     - Deducts amount from seller's investment (`PARTIAL_EXIT` or `FULL_EXIT` capital activity; cost basis reduced proportionally)
      - Creates / tops-up buyer's investment with an `INITIAL_INVESTMENT` capital activity
-     - Marks the `OwnershipTransfer` as `COMPLETED`
+     - Marks the `OwnershipTransfer` as `COMPLETED` and cancels competing interests
+- **Direct transfers** (with a named `to_user`) are never listed publicly
 - **Full Exit Detection**: Logs a `FULL_EXIT` activity (instead of `PARTIAL_EXIT`) when a buyout wipes the seller's entire position
 - **Raised-Amount Integrity**: Secondary market transfers do **not** modify `MarketplaceOpportunity.current_raised_amount` — no new capital enters the opportunity; only existing ownership changes hands
 
-### � Custom Admin API
+### 🛠 Custom Admin API
 - **Dedicated Admin Panel**: `/api/admin/` powers a custom front-end to rival Django's default admin.
 - **RESTful Controls**: Staff-only endpoints to manage users, verify emails, suspend/unlock accounts, and terminate sessions.
 - **Lifecycle Management**: Approve ownership transfers, publish marketplace opportunities, and record capital activities directly via API.
 - **Analytics & Logs**: Platform-wide KPIs, user analytics, AUM trends, and an immutable security audit trail.
 
-### �👥 Investor Network
+### 👥 Investor Network
 - **Directory**: Connect with other accredited investors
 - **Profiles**: Customizable investor profiles with privacy controls
 - **Connections**: Send/accept connection requests
@@ -118,6 +122,8 @@ The backend includes comprehensive, interactive API documentation.
    SECRET_KEY=your-secret-key-dev
    ALLOWED_HOSTS=localhost,127.0.0.1
    DATABASE_URL=sqlite:///db.sqlite3
+   # Optional: REDIS_URL (RQ + shared throttling cache), MEDIA_ROOT, AUTH_THROTTLE_RATE,
+   # NUM_PROXIES (trusted proxies in front of the app; default 1 in production), EMAIL_TIMEOUT
    ```
 
 5. **Run Migrations**:
@@ -142,10 +148,15 @@ The backend includes comprehensive, interactive API documentation.
 Automatically grow investment values based on opportunity target IRR using compound interest.
 - **Task**: `investments.tasks.run_daily_irr_accrual`
 - **Schedule**: Daily at midnight (Managed by `django-rq`).
-- **Idempotency**: Skips automatically if already executed today. Override with `--force`:
+- **Idempotency**: Each investment is accrued at most once per day; missed days are backfilled. Preview with:
   ```bash
-  python manage.py accrue_daily_irr --force
+  python manage.py accrue_daily_irr --dry-run
   ```
+
+### Daily Clean-up
+Flushes expired JWT tokens, old OTP codes and expired sessions.
+- **Task**: `core.tasks.run_daily_cleanup`
+- **Schedule**: Every 24 hours (Managed by `django-rq`).
 
 ### Opportunity Status Transitions
 Transitions opportunities from `NEW` to `ACTIVE` after 24 hours.
@@ -153,11 +164,11 @@ Transitions opportunities from `NEW` to `ACTIVE` after 24 hours.
 - **Schedule**: Every 6 hours (Managed by `django-rq`).
 
 ### Railway Worker (Production)
-In Railway, use the **Worker Service** running `sh run_worker.sh`. This process handles:
+The Railway start command in `railway.toml` runs migrations, starts `run_worker.sh` in the background, then starts gunicorn. `run_worker.sh` handles:
 1.  **Scheduler**: Triggers the tasks at the right time.
-2.  **Worker**: Executes the tasks in the background.
+2.  **Worker**: Executes the tasks (kept in the foreground, so the script also works as a standalone worker process, e.g. the Procfile `worker`).
 
-> ⚠️ `run_worker.sh` calls `setup_periodic_tasks` on every deploy, which schedules the IRR accrual for immediate execution. The built-in idempotency guard prevents double-accrual on days with multiple deployments.
+> ⚠️ `run_worker.sh` calls `setup_periodic_tasks` on every deploy, which schedules the IRR accrual for immediate execution. Accrual is idempotent per investment, so multiple deployments in a day never double-accrue. Run the worker in only one place (either the web start command or a separate worker service), not both.
 
 To initialize the schedule, run this command once:
 ```bash
@@ -169,7 +180,7 @@ python manage.py setup_periodic_tasks
 Run the test suite to ensure system stability:
 
 ```bash
-python manage.py test
+python manage.py test accounts core marketplace admin_api investments
 ```
 
 ## 🚀 Production Deployment
@@ -179,7 +190,7 @@ python manage.py test
    Configure `DATABASE_URL` for PostgreSQL.
 
 2. **Security Settings**:
-   The application is configured for production security (SSL, HSTS, secure cookies) when `DEBUG=False`.
+   The application is configured for production security (HSTS, secure cookies, trusting the proxy's `X-Forwarded-Proto`) when `DEBUG=False`. `SECURE_SSL_REDIRECT` can be enabled safely; `/api/health/` is exempt so the platform health check keeps working.
 
 3. **Web Server**:
    Use **Gunicorn** behind **Nginx**.

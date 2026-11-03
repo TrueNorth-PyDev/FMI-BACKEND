@@ -5,8 +5,6 @@ Handles OTP generation, email sending, and security helpers.
 
 from django.core.mail import send_mail
 from django.conf import settings
-from django.template.loader import render_to_string
-from django.utils.html import strip_tags
 import logging
 
 logger = logging.getLogger('accounts')
@@ -140,12 +138,17 @@ def get_client_ip(request):
     Returns:
         str: IP address
     """
+    # Same rule as DRF throttling: with N trusted proxies, the client address is
+    # the Nth entry from the right (entries further left can be forged).
+    from rest_framework.settings import api_settings
+
     x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0]
-    else:
-        ip = request.META.get('REMOTE_ADDR')
-    return ip
+    num_proxies = api_settings.NUM_PROXIES
+    if x_forwarded_for and num_proxies:
+        addresses = [addr.strip() for addr in x_forwarded_for.split(',') if addr.strip()]
+        if addresses:
+            return addresses[-min(num_proxies, len(addresses))]
+    return request.META.get('REMOTE_ADDR')
 
 
 def log_auth_event(event_type, user_email, ip_address, success=True, details=None):

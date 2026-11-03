@@ -7,6 +7,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from accounts.models import InvestorProfile
@@ -42,7 +44,8 @@ class AdminInvestorProfileViewSet(viewsets.ModelViewSet):
         GET    /api/admin/investor-profiles/by-user/{user_id}/  – lookup by user
     """
     permission_classes = [IsAdminUser]
-    http_method_names = ['get', 'patch', 'post', 'head', 'options']
+    # Profiles are created automatically on signup, so there is no create endpoint
+    http_method_names = ['get', 'patch', 'head', 'options']
 
     def get_queryset(self):
         qs = InvestorProfile.objects.select_related('user').order_by('-created_at')
@@ -60,14 +63,12 @@ class AdminInvestorProfileViewSet(viewsets.ModelViewSet):
         if investor_category:
             qs = qs.filter(investor_category=investor_category)
         if search:
-            qs = qs.filter(
-                display_name__icontains=search
-            ) | qs.filter(user__email__icontains=search)
+            qs = qs.filter(Q(display_name__icontains=search) | Q(user__email__icontains=search))
 
         return qs
 
     def get_serializer_class(self):
-        if self.request.method in ('PATCH', 'POST'):
+        if self.request.method == 'PATCH':
             return AdminInvestorProfileUpdateSerializer
         return AdminInvestorProfileSerializer
 
@@ -127,15 +128,19 @@ class AdminInvestorInterestViewSet(viewsets.ModelViewSet):
         if status_filter:
             qs = qs.filter(status=status_filter.upper())
         if search:
-            qs = qs.filter(user__email__icontains=search) | qs.filter(
-                opportunity__title__icontains=search
-            )
+            qs = qs.filter(Q(user__email__icontains=search) | Q(opportunity__title__icontains=search))
         return qs
 
     def get_serializer_class(self):
-        if self.request.method in ('PATCH', 'POST') and self.action != 'create':
+        if self.action == 'partial_update':
             return AdminInvestorInterestUpdateSerializer
         return AdminInvestorInterestSerializer
+
+    def perform_destroy(self, instance):
+        if instance.status == 'CONVERTED':
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('A converted interest is part of the investment record and cannot be deleted.')
+        instance.delete()
 
     # ---- Action: convert ----
     @action(detail=True, methods=['post'], url_path='convert')
@@ -147,8 +152,16 @@ class AdminInvestorInterestViewSet(viewsets.ModelViewSet):
                 {'detail': 'Already converted.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        interest.status = 'CONVERTED'
-        interest.save(update_fields=['status'])
+        if interest.status != 'PENDING':
+            return Response(
+                {'detail': f'Cannot convert interest with status {interest.status}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # The signal creates/tops up the investment; a failure (e.g. over-funding)
+        # rolls the status back and is returned as a 400.
+        with transaction.atomic():
+            interest.status = 'CONVERTED'
+            interest.save(update_fields=['status', 'updated_at'])
         return Response(
             AdminInvestorInterestSerializer(interest, context={'request': request}).data,
             status=status.HTTP_200_OK,
@@ -165,7 +178,7 @@ class AdminInvestorInterestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         interest.status = 'CANCELLED'
-        interest.save(update_fields=['status'])
+        interest.save(update_fields=['status', 'updated_at'])
         return Response(
             AdminInvestorInterestSerializer(interest, context={'request': request}).data,
             status=status.HTTP_200_OK,

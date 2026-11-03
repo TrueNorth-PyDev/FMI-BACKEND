@@ -92,6 +92,20 @@ class Investment(models.Model):
         help_text="Fund vintage year"
     )
     
+    # How much of this investment counts toward the opportunity's raised amount.
+    # Ownership transfers move value and cost basis between investors without
+    # adding capital, so a bought-in position contributes nothing here.
+    primary_capital = models.DecimalField(
+        max_digits=20, decimal_places=2, default=Decimal('0.00'), editable=False,
+        help_text="Capital this investment contributed to the opportunity's raised amount",
+    )
+
+    # Daily IRR accrual bookkeeping: value growth has been applied up to and
+    # including this date. Kept separately from PerformanceSnapshot so that an
+    # ordinary save (which snapshots today's value) can't make the accrual job
+    # think missed days are already accrued.
+    last_accrued_date = models.DateField(null=True, blank=True, editable=False)
+    
     # Progress
     progress_percentage = models.DecimalField(
         max_digits=5,
@@ -119,39 +133,91 @@ class Investment(models.Model):
     def __str__(self):
         return f"{self.get_name()} - {self.user.email}"
 
+    def _load_previous_state(self):
+        """
+        Read the stored opportunity/total_invested once per save. Used by clean()
+        and by the post_save signals that keep the opportunity's totals in sync.
+        """
+        old = None
+        if self.pk:
+            old = Investment.objects.filter(pk=self.pk).values(
+                'opportunity_id', 'total_invested', 'primary_capital', 'status'
+            ).first()
+        self._old_opportunity_id = old['opportunity_id'] if old else None
+        self._old_total_invested = old['total_invested'] if old else Decimal('0.00')
+        self._old_primary_capital = old['primary_capital'] if old else Decimal('0.00')
+        self._old_status = old['status'] if old else None
+        self._compute_primary_capital()
+
+    def _compute_primary_capital(self):
+        """
+        Derive primary_capital from the change being saved:
+        - no opportunity: contributes nothing
+        - ownership transfer (_skip_financial_sync): contributes nothing new
+        - new investment, or moved to another opportunity: all of total_invested
+        - otherwise: changes to total_invested are capital added or withdrawn
+        """
+        moved = self.pk is None or self._old_opportunity_id != self.opportunity_id
+        if not self.opportunity_id:
+            self.primary_capital = Decimal('0.00')
+        elif getattr(self, '_skip_financial_sync', False):
+            if moved:
+                self.primary_capital = Decimal('0.00')
+        elif moved:
+            self.primary_capital = self.total_invested or Decimal('0.00')
+        else:
+            delta = (self.total_invested or Decimal('0.00')) - self._old_total_invested
+            self.primary_capital = max(self._old_primary_capital + delta, Decimal('0.00'))
+
     def clean(self):
         """
-        Validate that investment doesn't exceed opportunity target.
+        Validate that new primary capital doesn't push the opportunity past its target.
+
+        Only the capital being *added* to the opportunity is checked, so value-only
+        updates and ownership transfers are never rejected because an opportunity
+        is fully funded.
         """
         from django.core.exceptions import ValidationError
         
-        if self.opportunity and self.total_invested:
-            target = self.opportunity.target_raise_amount
-            current = self.opportunity.current_raised_amount or Decimal('0.00')
-            
-            # For updates, we need to subtract the old amount first
-            if self.pk:
-                try:
-                    old_instance = Investment.objects.get(pk=self.pk)
-                    current -= old_instance.total_invested
-                except Investment.DoesNotExist:
-                    pass
-            
-            if current + self.total_invested > target:
-                raise ValidationError(
-                    f"Total investment exceeds the target amount. "
-                    f"Please buy less as your amount is greater than the target raised amount. "
-                    f"(Target: ${target}, Current: ${current})"
-                )
+        if not self.opportunity:
+            return
+        if not hasattr(self, '_old_primary_capital'):
+            self._load_previous_state()
+        
+        previous = self._old_primary_capital if self._old_opportunity_id == self.opportunity_id else Decimal('0.00')
+        added = self.primary_capital - previous
+        if added <= 0:
+            return
+        
+        target = self.opportunity.target_raise_amount
+        current = self.opportunity.current_raised_amount or Decimal('0.00')
+        if current + added > target:
+            raise ValidationError(
+                f"Total investment exceeds the target amount. "
+                f"Please buy less as your amount is greater than the target raised amount. "
+                f"(Target: ${target}, Current: ${current})"
+            )
 
     def save(self, *args, **kwargs):
-        """Override save to call clean() and handle name/sector defaults."""
-        self.full_clean()
+        """Validate, fill opportunity-derived defaults, and stash previous state for signals."""
+        self._load_previous_state()
+        is_new = self.pk is None
+        if is_new and not self.last_accrued_date:
+            # Growth starts accruing from the day after the investment is recorded
+            self.last_accrued_date = timezone.now().date()
         if self.opportunity:
             if not self.name:
                 self.name = self.opportunity.title
             self.sector = self.opportunity.sector
             self.expected_horizon_years = self.opportunity.investment_term_years
+            if is_new and not self.fund_size:
+                self.fund_size = self.opportunity.current_raised_amount
+        self.full_clean()
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            kwargs['update_fields'] = set(update_fields) | {
+                'name', 'sector', 'expected_horizon_years', 'primary_capital'
+            }
         super().save(*args, **kwargs)
     
     def get_name(self):
@@ -215,8 +281,8 @@ class Investment(models.Model):
     def expected_end_date(self):
         """Calculate expected investment end date."""
         if self.expected_horizon_years:
-            from datetime import timedelta
-            return self.investment_date + timedelta(days=365 * self.expected_horizon_years)
+            from dateutil.relativedelta import relativedelta
+            return self.investment_date + relativedelta(years=self.expected_horizon_years)
         return None
     
     def calculate_irr(self):
@@ -259,6 +325,13 @@ class CapitalActivity(models.Model):
     )
     date = models.DateField(help_text="Activity date")
     details = models.TextField(blank=True, help_text="Activity description")
+    cost_basis = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Exits only: cost basis of the portion sold (realized gain = amount - cost_basis)",
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -273,8 +346,20 @@ class CapitalActivity(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.get_activity_type_display()} - {self.investment.name} - ${self.amount}"
+        return f"{self.get_activity_type_display()} - {self.investment.get_name()} - ${self.amount}"
     
+    OUTFLOW_TYPES = ('INITIAL_INVESTMENT', 'CAPITAL_CALL')
+    INFLOW_TYPES = ('DISTRIBUTION', 'PARTIAL_EXIT', 'FULL_EXIT')
+
+    @classmethod
+    def signed_amount(cls, activity_type, amount):
+        """Apply the sign convention: negative for capital paid in, positive for proceeds."""
+        if activity_type in cls.OUTFLOW_TYPES:
+            return -abs(amount)
+        if activity_type in cls.INFLOW_TYPES:
+            return abs(amount)
+        return amount
+
     def save(self, *args, **kwargs):
         """Log capital activity creation."""
         is_new = self.pk is None
@@ -282,7 +367,7 @@ class CapitalActivity(models.Model):
         
         if is_new:
             logger.info(
-                f"Capital activity created: {self.activity_type} for {self.investment.name}, "
+                f"Capital activity created: {self.activity_type} for {self.investment.get_name()}, "
                 f"Amount: ${self.amount}, Date: {self.date}"
             )
 
@@ -318,7 +403,7 @@ class PerformanceSnapshot(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.investment.name} - {self.date} - ${self.value}"
+        return f"{self.investment.get_name()} - {self.date} - ${self.value}"
 
 
 class OwnershipTransfer(models.Model):
@@ -421,7 +506,7 @@ class OwnershipTransfer(models.Model):
     
     def __str__(self):
         recipient = self.to_user.email if self.to_user else self.to_email
-        return f"{self.investment.name} transfer from {self.from_user.email} to {recipient}"
+        return f"{self.investment.get_name()} transfer from {self.from_user.email} to {recipient}"
     
     def save(self, *args, **kwargs):
         """Calculate fees and net amount before saving."""
@@ -439,7 +524,7 @@ class OwnershipTransfer(models.Model):
         
         if is_new:
             logger.info(
-                f"Ownership transfer created: {self.investment.name} from {self.from_user.email}, "
+                f"Ownership transfer created: {self.investment.get_name()} from {self.from_user.email}, "
                 f"Amount: ${self.transfer_amount}, Status: {self.status}"
             )
 

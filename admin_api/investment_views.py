@@ -56,9 +56,7 @@ class AdminInvestmentViewSet(ModelViewSet):
             return Response({'count': qs.count(), 'results': serializer.data})
 
         # POST — manually record a capital activity
-        data = request.data.copy()
-        data['investment'] = investment.pk
-        serializer = AdminCapitalActivitySerializer(data=data)
+        serializer = AdminCapitalActivitySerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(investment=investment)
             return Response(serializer.data, status=status.HTTP_201_CREATED)

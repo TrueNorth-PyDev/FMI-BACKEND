@@ -1,36 +1,21 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
-from .models import InvestorProfile
+from .models import InvestorProfile, UserNotificationPreference
 import logging
 
 logger = logging.getLogger('accounts')
 User = get_user_model()
 
-@receiver(post_save, sender=User)
-def create_investor_profile(sender, instance, created, **kwargs):
-    """Create InvestorProfile when a new User is created."""
-    if created:
-        InvestorProfile.objects.create(user=instance)
-        logger.info(f"InvestorProfile created for user: {instance.email}")
-
 
 @receiver(post_save, sender=User)
-def create_notification_preferences(sender, instance, created, **kwargs):
-    """
-    Automatically create UserNotificationPreference when a new user is created.
-    """
-    from .models import UserNotificationPreference
-    
-    if created:
-        UserNotificationPreference.objects.create(user=instance)
-        logger.info(f"UserNotificationPreference created for user: {instance.email}")
-
-@receiver(post_save, sender=User)
-def save_investor_profile(sender, instance, **kwargs):
-    """Save InvestorProfile when User is saved."""
-    try:
-        instance.investor_profile.save()
-    except InvestorProfile.DoesNotExist:
-        # Should be created by create_investor_profile, but for safety:
-        InvestorProfile.objects.create(user=instance)
+def create_user_related_records(sender, instance, created, **kwargs):
+    """Create the InvestorProfile and notification preferences for a new user."""
+    if not created:
+        return
+    InvestorProfile.objects.get_or_create(
+        user=instance,
+        defaults={'display_name': instance.get_full_name() or instance.email.split('@')[0]},
+    )
+    UserNotificationPreference.objects.get_or_create(user=instance)
+    logger.info(f"InvestorProfile and notification preferences created for user: {instance.email}")

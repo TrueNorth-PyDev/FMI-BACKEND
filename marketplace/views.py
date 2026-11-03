@@ -8,13 +8,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.db.models import Q
-from django.shortcuts import get_object_or_404
 
-from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest, InvestorInterest
+from .models import MarketplaceOpportunity, InvestmentInterest, InvestorInterest
 from .serializers import (
     MarketplaceOpportunityListSerializer,
     MarketplaceOpportunityDetailSerializer,
-    InvestmentInterestSerializer,
     InvestorInterestSerializer,
 )
 import logging
@@ -61,7 +59,10 @@ class MarketplaceOpportunityViewSet(viewsets.ReadOnlyModelViewSet):
         # Featured first
         queryset = queryset.order_by('-is_featured', '-created_at')
         
-        return queryset.prefetch_related('documents', 'tags')
+        # Only the detail view renders documents
+        if self.action == 'retrieve':
+            return queryset.prefetch_related('documents', 'tags')
+        return queryset.prefetch_related('tags')
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -130,19 +131,20 @@ class MarketplaceOpportunityViewSet(viewsets.ReadOnlyModelViewSet):
     def remove_bookmark(self, request, pk=None):
         """
         Remove bookmark from an opportunity.
+        Works for closed opportunities too, which no longer appear in the listing.
         """
-        opportunity = self.get_object()
-        
+        if not str(pk).isdigit():
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         # Delete bookmark if exists
         deleted_count = InvestmentInterest.objects.filter(
             user=request.user,
-            opportunity=opportunity,
+            opportunity_id=pk,
             interest_type='BOOKMARKED'
         ).delete()[0]
         
         if deleted_count > 0:
             logger.info(
-                f"Bookmark removed: {request.user.email} removed {opportunity.title} from watchlist"
+                f"Bookmark removed: {request.user.email} removed opportunity {pk} from watchlist"
             )
             message = "Opportunity removed from your watchlist."
         else:
@@ -177,7 +179,7 @@ class WatchlistViewSet(viewsets.ViewSet):
         from .models import MarketplaceOpportunity
         opportunities = MarketplaceOpportunity.objects.filter(
             pk__in=bookmarked_ids,
-        ).prefetch_related('documents', 'tags').order_by('-created_at')
+        ).prefetch_related('tags').order_by('-created_at')
 
         serializer = MarketplaceOpportunityListSerializer(
             opportunities,
@@ -193,14 +195,20 @@ class WatchlistViewSet(viewsets.ViewSet):
 
 class InvestorInterestViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for tracking specific investor intent ( pledges).
+    ViewSet for tracking specific investor intent (pledges).
+
+    Investors create pledges and may edit or cancel them while PENDING. Staff
+    convert a pledge into an investment via the admin API.
     """
     serializer_class = InvestorInterestSerializer
     permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_queryset(self):
         """Users can only see their own interest expressions."""
-        return InvestorInterest.objects.filter(user=self.request.user).select_related('opportunity')
+        if getattr(self, 'swagger_fake_view', False):  # OpenAPI schema generation
+            return InvestorInterest.objects.none()
+        return InvestorInterest.objects.filter(user=self.request.user).select_related('user', 'opportunity')
 
     def perform_create(self, serializer):
         """Log interest creation."""
@@ -209,3 +217,16 @@ class InvestorInterestViewSet(viewsets.ModelViewSet):
             f"Investor pledged interest: {self.request.user.email} pledged "
             f"${interest.amount} for {interest.opportunity.title}"
         )
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Withdraw a PENDING pledge."""
+        interest = self.get_object()
+        if interest.status != 'PENDING':
+            return Response(
+                {"error": f"Cannot cancel a pledge with status {interest.status}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        interest.status = 'CANCELLED'
+        interest.save(update_fields=['status', 'updated_at'])
+        return Response(InvestorInterestSerializer(interest, context={'request': request}).data)

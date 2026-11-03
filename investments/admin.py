@@ -1,4 +1,5 @@
 from django.contrib import admin
+from core.admin_forms import DryRunSaveForm
 from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 
 
@@ -9,14 +10,16 @@ class InvestmentAdmin(admin.ModelAdmin):
                     'unrealized_gain_percentage', 'investment_date']
     list_filter = ['status', 'sector', 'investment_date']
     search_fields = ['name', 'opportunity__title', 'user__email', 'manager']
-    readonly_fields = ['created_at', 'updated_at', 'unrealized_gain', 'unrealized_gain_percentage', 'moic']
+    readonly_fields = ['created_at', 'updated_at', 'unrealized_gain', 'unrealized_gain_percentage', 'moic',
+                       'primary_capital', 'last_accrued_date']
     
     fieldsets = (
         ('Basic Information', {
             'fields': ('user', 'opportunity', 'name', 'status', 'sector')
         }),
         ('Financial Details', {
-            'fields': ('total_invested', 'current_value', 'fund_size', 'unfunded_commitment')
+            'fields': ('total_invested', 'current_value', 'primary_capital', 'fund_size', 'unfunded_commitment',
+                       'last_accrued_date')
         }),
         ('Fund Information', {
             'fields': ('manager', 'investment_date', 'expected_horizon_years', 'fund_vintage', 'progress_percentage')
@@ -39,14 +42,14 @@ class InvestmentAdmin(admin.ModelAdmin):
 @admin.register(CapitalActivity)
 class CapitalActivityAdmin(admin.ModelAdmin):
     """Admin interface for CapitalActivity model."""
-    list_display = ['investment', 'activity_type', 'amount', 'date', 'created_at']
+    list_display = ['investment', 'activity_type', 'amount', 'cost_basis', 'date', 'created_at']
     list_filter = ['activity_type', 'date']
     search_fields = ['investment__name', 'details']
     readonly_fields = ['created_at']
     
     fieldsets = (
         (None, {
-            'fields': ('investment', 'activity_type', 'amount', 'date', 'details')
+            'fields': ('investment', 'activity_type', 'amount', 'cost_basis', 'date', 'details')
         }),
         ('Metadata', {
             'fields': ('created_at',),
@@ -83,11 +86,12 @@ class TransferDocumentInline(admin.TabularInline):
 @admin.register(OwnershipTransfer)
 class OwnershipTransferAdmin(admin.ModelAdmin):
     """Admin interface for OwnershipTransfer model."""
+    form = DryRunSaveForm
     list_display = ['investment', 'from_user', 'get_recipient', 'transfer_amount', 
                     'transfer_fee', 'status', 'initiated_date']
     list_filter = ['status', 'transfer_type', 'initiated_date']
     search_fields = ['investment__name', 'from_user__email', 'to_user__email', 'to_email']
-    readonly_fields = ['transfer_fee', 'net_amount', 'initiated_date', 'created_at', 'updated_at']
+    readonly_fields = ['transfer_fee', 'net_amount', 'is_processed', 'initiated_date', 'created_at', 'updated_at']
     inlines = [TransferDocumentInline]
     
     fieldsets = (
@@ -126,6 +130,7 @@ class TransferDocumentAdmin(admin.ModelAdmin):
 @admin.register(SecondaryMarketInterest)
 class SecondaryMarketInterestAdmin(admin.ModelAdmin):
     """Admin interface for SecondaryMarketInterest model."""
+    form = DryRunSaveForm
     list_display = ['transfer', 'buyer', 'amount', 'status', 'created_at', 'updated_at']
     list_filter = ['status', 'created_at']
     search_fields = ['buyer__email', 'transfer__investment__name', 'transfer__investment__opportunity__title']

@@ -5,26 +5,22 @@ Handles investment CRUD, portfolio analytics, and capital activities.
 
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
-from django.utils.decorators import method_decorator
-from django.views.decorators.cache import never_cache
-from datetime import datetime, timedelta
+from django.db import transaction
+from django.db.models import Q
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
+from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 
-from .models import Investment, CapitalActivity, PerformanceSnapshot, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
+from .models import Investment, CapitalActivity, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 from .serializers import (
     InvestmentListSerializer,
     InvestmentDetailSerializer,
-    InvestmentCreateUpdateSerializer,
     CapitalActivitySerializer,
     PerformanceSnapshotSerializer,
-    PortfolioSummarySerializer,
-    SectorAllocationSerializer,
-    RiskMetricsSerializer,
-    PerformanceDataSerializer,
-    ReturnsAnalysisSerializer,
-    ReturnAttributionSerializer,
-    DistributionHistorySerializer,
     OwnershipTransferListSerializer,
     OwnershipTransferDetailSerializer,
     OwnershipTransferCreateSerializer,
@@ -32,11 +28,6 @@ from .serializers import (
     SecondaryMarketInterestSerializer,
     SecondaryMarketInterestCreateSerializer,
     QuarterlyPerformanceSerializer,
-    AssetAllocationSerializer,
-    RebalancingRecommendationSerializer,
-    ConcentrationRiskSerializer,
-    StressTestScenarioSerializer,
-    PortfolioVolatilitySerializer,
 )
 from .utils import (
     calculate_portfolio_metrics,
@@ -46,8 +37,6 @@ from .utils import (
     calculate_max_drawdown,
     calculate_value_at_risk,
     calculate_returns_analysis,
-    calculate_return_attribution,
-    get_distribution_history,
     calculate_quarterly_performance,
     calculate_alpha,
     calculate_asset_allocation,
@@ -61,42 +50,32 @@ import logging
 logger = logging.getLogger('investments')
 
 
-class InvestmentViewSet(viewsets.ModelViewSet):
+class InvestmentViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for managing investments.
-    
-    Provides CRUD operations for investments and individual investment details.
+    Read-only view of the current user's investments.
+
+    Investments are created by staff converting a marketplace pledge, by
+    completed ownership transfers / secondary purchases, or via the admin API.
     """
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
         """Return investments for the current user."""
-        return Investment.objects.filter(
+        if getattr(self, 'swagger_fake_view', False):  # OpenAPI schema generation
+            return Investment.objects.none()
+        queryset = Investment.objects.filter(
             user=self.request.user
         ).select_related('opportunity')
+        if self.action == 'retrieve':
+            # Nested capital activities (each also renders its investment)
+            queryset = queryset.prefetch_related('capital_activities')
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
         if self.action == 'list':
             return InvestmentListSerializer
-        elif self.action in ['create', 'update', 'partial_update']:
-            return InvestmentCreateUpdateSerializer
         return InvestmentDetailSerializer
-    
-    def perform_create(self, serializer):
-        """Create investment for current user."""
-        investment = serializer.save()
-        logger.info(f"Investment created: {investment.get_name()} by {self.request.user.email}")
-    
-    def perform_update(self, serializer):
-        """Update investment."""
-        investment = serializer.save()
-        logger.info(f"Investment updated: {investment.get_name()} by {self.request.user.email}")
-    
-    def perform_destroy(self, instance):
-        """Delete investment."""
-        logger.info(f"Investment deleted: {instance.get_name()} by {self.request.user.email}")
-        instance.delete()
     
     @action(detail=True, methods=['get'])
     def performance_history(self, request, pk=None):
@@ -105,7 +84,10 @@ class InvestmentViewSet(viewsets.ModelViewSet):
         Query params: days (default 365)
         """
         investment = self.get_object()
-        days = int(request.query_params.get('days', 365))
+        try:
+            days = min(max(int(request.query_params.get('days', 365)), 1), 3650)
+        except ValueError:
+            return Response({"error": "days must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
         
         snapshots = investment.get_performance_history(days=days)
         serializer = PerformanceSnapshotSerializer(snapshots, many=True)
@@ -118,17 +100,18 @@ class InvestmentViewSet(viewsets.ModelViewSet):
         })
 
 
-class CapitalActivityViewSet(viewsets.ModelViewSet):
+class CapitalActivityViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for managing capital activities.
-    
-    Provides CRUD operations for capital calls and distributions.
+    Read-only view of capital activities (calls, distributions, exits) on the
+    current user's investments. Staff record activities via the admin API.
     """
     serializer_class = CapitalActivitySerializer
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
         """Return capital activities for user's investments."""
+        if getattr(self, 'swagger_fake_view', False):  # OpenAPI schema generation
+            return CapitalActivity.objects.none()
         # Filter via JOIN (investment__user) instead of a subquery to avoid
         # a separate IN (...) query for every request.
         queryset = CapitalActivity.objects.filter(
@@ -138,6 +121,8 @@ class CapitalActivityViewSet(viewsets.ModelViewSet):
         # Filter by investment if provided
         investment_id = self.request.query_params.get('investment')
         if investment_id:
+            if not investment_id.isdigit():
+                raise ValidationError({"investment": "Must be an investment ID."})
             queryset = queryset.filter(investment_id=investment_id)
 
         # Filter by activity type if provided
@@ -146,14 +131,6 @@ class CapitalActivityViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(activity_type=activity_type)
 
         return queryset
-    
-    def perform_create(self, serializer):
-        """Create capital activity."""
-        activity = serializer.save()
-        logger.info(
-            f"Capital activity created: {activity.activity_type} for {activity.investment.get_name()}, "
-            f"Amount: ${activity.amount}"
-        )
 
 
 class PortfolioAnalyticsViewSet(viewsets.ViewSet):
@@ -181,22 +158,23 @@ class PortfolioAnalyticsViewSet(viewsets.ViewSet):
         investments = request.user.investments.filter(
             status__in=['ACTIVE', 'UNDERPERFORMING']
         ).select_related('opportunity')
-        investment_performance = []
-        
-        for inv in investments:
-            investment_performance.append({
+        total_value = metrics['total_value']
+        investment_performance = [
+            {
                 'name': inv.get_name(),
                 'value': float(inv.current_value),
-                'percentage': float((inv.current_value / metrics['total_value'] * 100) if metrics['total_value'] > 0 else 0),
-                'return_percentage': float(inv.unrealized_gain_percentage)
-            })
+                'percentage': float(inv.current_value / total_value * 100) if total_value > 0 else 0.0,
+                'return_percentage': float(inv.unrealized_gain_percentage),
+            }
+            for inv in investments
+        ]
         
         return Response({
             'key_metrics': {
                 'total_portfolio_return': float(metrics.get('unrealized_gains_percentage', 0)),
                 'annualized_irr': float(metrics.get('average_irr', 0)),
                 'portfolio_value': float(metrics.get('total_value', 0)),
-                'distributions_received': float(calculate_returns_analysis(request.user).get('realized_gains', 0))
+                'distributions_received': float(calculate_returns_analysis(request.user)['cash_received'])
             },
             'sector_performance': sector_allocation,
             'investment_performance': investment_performance
@@ -211,7 +189,6 @@ class PortfolioAnalyticsViewSet(viewsets.ViewSet):
         quarterly_perf = calculate_quarterly_performance(request.user)
         
         # Risk-adjusted metrics
-        metrics = calculate_portfolio_metrics(request.user)
         sharpe = calculate_sharpe_ratio(request.user)
         alpha = calculate_alpha(request.user)
         beta = calculate_portfolio_beta(request.user)
@@ -238,7 +215,7 @@ class PortfolioAnalyticsViewSet(viewsets.ViewSet):
         allocation = calculate_asset_allocation(request.user)
         
         # Rebalancing recommendations
-        recommendations = calculate_rebalancing_recommendations(request.user)
+        recommendations = calculate_rebalancing_recommendations(request.user, allocation=allocation)
         
         return Response({
             'current_allocation': allocation,
@@ -279,25 +256,31 @@ class PortfolioAnalyticsViewSet(viewsets.ViewSet):
 
 class OwnershipTransferViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing ownership transfers.
-    
-    Provides CRUD operations and status management for transfers.
+    Ownership transfers created by an investment's owner.
+
+    Owners create transfers as DRAFT (or PENDING to submit straight away), edit
+    drafts, submit them and cancel them. A PENDING transfer without a recipient
+    (to_user) is listed on the secondary market. Approval and completion are
+    staff actions: /api/admin/transfers/{id}/approve|complete|reject/.
     """
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
         """Return transfers for the current user (both outgoing and incoming)."""
-        from django.db.models import Q
-        
+        if getattr(self, 'swagger_fake_view', False):  # OpenAPI schema generation
+            return OwnershipTransfer.objects.none()
         user = self.request.user
         queryset = OwnershipTransfer.objects.filter(
             Q(from_user=user) | Q(to_user=user)
-        ).select_related('investment', 'from_user', 'to_user')
+        ).select_related('investment', 'investment__opportunity', 'from_user', 'to_user')
+        
+        if self.action == 'retrieve':
+            queryset = queryset.prefetch_related('documents')
         
         # Filter by status
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
+            queryset = queryset.filter(status=status_filter.upper())
         
         # Filter by direction
         direction = self.request.query_params.get('direction')
@@ -321,20 +304,31 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         transfer = serializer.save()
         logger.info(f"Transfer created: {transfer.id} by {self.request.user.email}")
     
+    def perform_update(self, serializer):
+        """Only the owner may edit, and only while the transfer is a draft."""
+        transfer = serializer.instance
+        if transfer.from_user_id != self.request.user.id:
+            raise PermissionDenied("You can only update your own transfers.")
+        if transfer.status != 'DRAFT':
+            raise ValidationError("Only draft transfers can be updated.")
+        transfer = serializer.save()
+        logger.info(f"Transfer updated: {transfer.id} by {self.request.user.email}")
+    
     def perform_destroy(self, instance):
         """Cancel transfer (soft delete by changing status)."""
-        # Only owner can cancel
-        if instance.from_user != self.request.user:
-            from rest_framework.exceptions import PermissionDenied
+        if instance.from_user_id != self.request.user.id:
             raise PermissionDenied("You can only cancel your own transfers.")
         
-        # Can only cancel pending or draft transfers
-        if instance.status not in ['DRAFT', 'PENDING']:
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError("Can only cancel draft or pending transfers.")
-        
-        instance.status = 'CANCELLED'
-        instance.save()
+        with transaction.atomic():
+            # Lock and re-check so a cancel can't race a purchase of the listing
+            instance = OwnershipTransfer.objects.select_for_update().get(pk=instance.pk)
+            if instance.status not in ['DRAFT', 'PENDING']:
+                raise ValidationError("Can only cancel draft or pending transfers.")
+            instance.status = 'CANCELLED'
+            instance.save(update_fields=['status', 'updated_at'])
+            SecondaryMarketInterest.objects.filter(transfer=instance, status='PENDING').update(
+                status='CANCELLED', updated_at=timezone.now()
+            )
         logger.info(f"Transfer cancelled: {instance.id} by {self.request.user.email}")
     
     @action(detail=True, methods=['post'])
@@ -346,7 +340,7 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         transfer = self.get_object()
         
         # Only owner can submit
-        if transfer.from_user != request.user:
+        if transfer.from_user_id != request.user.id:
             return Response(
                 {"error": "You can only submit your own transfers."},
                 status=status.HTTP_403_FORBIDDEN
@@ -359,17 +353,15 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Update status
         transfer.status = 'PENDING'
         transfer.estimated_completion_date = timezone.now() + timedelta(days=10)
-        transfer.save()
+        transfer.save(update_fields=['status', 'estimated_completion_date', 'updated_at'])
         
         logger.info(f"Transfer submitted: {transfer.id}")
         
-        serializer = self.get_serializer(transfer)
         return Response({
             "message": "Transfer submitted successfully.",
-            "transfer": serializer.data
+            "transfer": OwnershipTransferListSerializer(transfer, context={'request': request}).data
         })
     
     @action(detail=False, methods=['get'])
@@ -377,19 +369,17 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         """
         Get all pending transfers (both outgoing and incoming).
         """
-        from django.db.models import Q
-        
         user = request.user
         transfers = OwnershipTransfer.objects.filter(
             Q(from_user=user) | Q(to_user=user),
             status__in=['PENDING', 'APPROVED']
-        ).select_related('investment', 'from_user', 'to_user').order_by('-created_at')
+        ).select_related('investment', 'investment__opportunity', 'from_user', 'to_user').order_by('-created_at')
         
         serializer = OwnershipTransferListSerializer(transfers, many=True, context={'request': request})
 
         return Response({
             'pending_transfers': serializer.data,
-            'total_count': len(serializer.data),  # Already evaluated above — no extra COUNT query
+            'total_count': len(serializer.data),
         })
     
     @action(detail=False, methods=['get'])
@@ -397,71 +387,31 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
         """
         Get transfer history (completed and cancelled transfers).
         """
-        from django.db.models import Q
-        
         user = request.user
         transfers = OwnershipTransfer.objects.filter(
             Q(from_user=user) | Q(to_user=user),
             status__in=['COMPLETED', 'CANCELLED', 'REJECTED']
-        ).select_related('investment', 'from_user', 'to_user').order_by('-completion_date', '-created_at')
+        ).select_related('investment', 'investment__opportunity', 'from_user', 'to_user').order_by(
+            '-completion_date', '-created_at'
+        )
         
         serializer = OwnershipTransferListSerializer(transfers, many=True, context={'request': request})
 
         return Response({
             'transfer_history': serializer.data,
-            'total_count': len(serializer.data),  # Already evaluated above — no extra COUNT query
+            'total_count': len(serializer.data),
         })
     
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
-    def approve(self, request, pk=None):
-        """
-        Approve a pending transfer (Admin only).
-        Changes status from PENDING to APPROVED.
-        """
+    @action(detail=True, methods=['get'], url_path=r'documents/(?P<document_id>\d+)/download')
+    def download_document(self, request, pk=None, document_id=None):
+        """Download a transfer document (sender and recipient only)."""
         transfer = self.get_object()
-        
-        if transfer.status != 'PENDING':
-            return Response(
-                {"error": "Only pending transfers can be approved."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        transfer.status = 'APPROVED'
-        transfer.save()
-        
-        logger.info(f"Transfer approved: {transfer.id} by {request.user.email}")
-        
-        serializer = self.get_serializer(transfer)
-        return Response({
-            "message": "Transfer approved successfully.",
-            "transfer": serializer.data
-        })
-    
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
-    def complete(self, request, pk=None):
-        """
-        Complete an approved transfer (Admin only).
-        Changes status from APPROVED to COMPLETED.
-        This triggers the signal to execute the asset transfer.
-        """
-        transfer = self.get_object()
-        
-        if transfer.status != 'APPROVED':
-            return Response(
-                {"error": "Only approved transfers can be completed."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        transfer.status = 'COMPLETED'
-        transfer.save()  # Signal will handle the rest
-        
-        logger.info(f"Transfer completed: {transfer.id} by {request.user.email}")
-        
-        serializer = self.get_serializer(transfer)
-        return Response({
-            "message": "Transfer completed successfully.",
-            "transfer": serializer.data
-        })
+        document = get_object_or_404(TransferDocument, pk=document_id, transfer=transfer)
+        try:
+            return FileResponse(document.file.open('rb'), as_attachment=True,
+                                filename=document.file.name.rsplit('/', 1)[-1])
+        except FileNotFoundError:
+            return Response({"error": "Document file is missing."}, status=status.HTTP_404_NOT_FOUND)
 
 
 class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
@@ -484,11 +434,12 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Return all PENDING transfers (platform-wide, not scoped to current user)."""
-        from django.db.models import Q
+        """Return all PENDING public listings (platform-wide, not scoped to current user)."""
 
+        # Direct transfers to a named recipient are not for sale
         qs = OwnershipTransfer.objects.filter(
-            status='PENDING'
+            status='PENDING',
+            to_user__isnull=True,
         ).select_related(
             'investment',
             'investment__opportunity',
@@ -505,19 +456,13 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
         if transfer_type:
             qs = qs.filter(transfer_type=transfer_type)
 
-        min_amount = params.get('min_amount')
-        if min_amount:
-            try:
-                qs = qs.filter(transfer_amount__gte=min_amount)
-            except (ValueError, TypeError):
-                pass
-
-        max_amount = params.get('max_amount')
-        if max_amount:
-            try:
-                qs = qs.filter(transfer_amount__lte=max_amount)
-            except (ValueError, TypeError):
-                pass
+        for param, lookup in (('min_amount', 'transfer_amount__gte'), ('max_amount', 'transfer_amount__lte')):
+            raw = params.get(param)
+            if raw:
+                try:
+                    qs = qs.filter(**{lookup: Decimal(raw)})
+                except InvalidOperation:
+                    raise ValidationError({param: "Must be a number."})
 
         return qs
 
@@ -543,15 +488,24 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        if transfer.status != 'PENDING':
+        existing = SecondaryMarketInterest.objects.filter(transfer=transfer, buyer=request.user).first()
+        if existing and existing.status != 'CANCELLED':
             return Response(
-                {"error": "This listing is no longer available."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "message": "Interest registered successfully.",
+                    "interest_id": existing.id,
+                    "created": False,
+                    "transfer_id": transfer.id,
+                    "amount": str(existing.amount),
+                    "status": existing.status,
+                    "note": "You already have a registered interest for this listing.",
+                },
+                status=status.HTTP_200_OK,
             )
 
         amount = request.data.get('amount', transfer.transfer_amount)
-
         serializer = SecondaryMarketInterestCreateSerializer(
+            instance=None,
             data={
                 'transfer':       transfer.pk,
                 'amount':         amount,
@@ -559,19 +513,13 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
             },
             context={'request': request},
         )
-        serializer.is_valid(raise_exception=True)
-
-        # get_or_create semantics — idempotent per buyer per listing
-        interest, created = SecondaryMarketInterest.objects.get_or_create(
-            transfer=transfer,
-            buyer=request.user,
-            defaults={
-                'amount':        serializer.validated_data['amount'],
-                'interest_date': serializer.validated_data.get(
-                    'interest_date', timezone.now().date()
-                ),
-            },
-        )
+        with transaction.atomic():
+            if existing:
+                # A previously cancelled interest is replaced by a fresh one
+                existing.delete()
+            serializer.is_valid(raise_exception=True)
+            interest = serializer.save(buyer=request.user)
+        created = True
 
         logger.info(
             f"Secondary market interest: {request.user.email} → "
@@ -586,11 +534,7 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
                 "transfer_id": transfer.id,
                 "amount": str(interest.amount),
                 "status": interest.status,
-                "note": (
-                    "Update the interest status to CONVERTED to execute the transfer."
-                    if created else
-                    "You already have a registered interest for this listing."
-                ),
+                "note": "Your interest will be reviewed; the purchase executes once approved by staff.",
             },
             status=status.HTTP_200_OK,
         )
@@ -600,20 +544,25 @@ class SecondaryMarketInterestViewSet(viewsets.ModelViewSet):
     """
     ViewSet for a buyer to view and manage their own SecondaryMarketInterest records.
 
-    Supported transitions via PATCH {status}:
-      PENDING  → CONVERTED  (triggers auto deduct-from-seller / credit-buyer signal)
-      PENDING  → CANCELLED
+    Buyers can register interest, change the amount while PENDING, and cancel.
+    The purchase itself executes when staff set the status to CONVERTED via
+    PATCH /api/admin/secondary-interests/{id}/.
 
-    List   : GET  /secondary-market-interests/
-    Retrieve: GET  /secondary-market-interests/{id}/
-    Update  : PATCH /secondary-market-interests/{id}/   { "status": "CONVERTED" }
+    List    : GET   /secondary-market-interests/
+    Create  : POST  /secondary-market-interests/          { transfer, amount }
+    Retrieve: GET   /secondary-market-interests/{id}/
+    Update  : PATCH /secondary-market-interests/{id}/     { amount }
+    Cancel  : POST  /secondary-market-interests/{id}/cancel/
     """
     permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):  # OpenAPI schema generation
+            return SecondaryMarketInterest.objects.none()
         return SecondaryMarketInterest.objects.filter(
             buyer=self.request.user
-        ).select_related('transfer', 'transfer__investment', 'transfer__from_user')
+        ).select_related('buyer', 'transfer', 'transfer__investment', 'transfer__from_user')
 
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -622,4 +571,17 @@ class SecondaryMarketInterestViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(buyer=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Withdraw a PENDING interest."""
+        interest = self.get_object()
+        if interest.status != 'PENDING':
+            return Response(
+                {"error": f"Cannot cancel an interest with status {interest.status}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        interest.status = 'CANCELLED'
+        interest.save(update_fields=['status', 'updated_at'])
+        return Response(SecondaryMarketInterestSerializer(interest).data)
 

@@ -1,12 +1,11 @@
 """
 Admin API Serializers — covers Users, Opportunities, Investments, Transfers.
 """
+from typing import Optional
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from accounts.models import (
-    InvestorProfile, UserSession, UserActivity,
-    UserNotificationPreference, InvestorConnection,
-)
+from accounts.models import InvestorProfile, UserSession, UserActivity
 from investments.models import Investment, CapitalActivity, OwnershipTransfer, SecondaryMarketInterest
 from marketplace.models import MarketplaceOpportunity, OpportunityDocument, InvestorInterest
 
@@ -31,11 +30,13 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             'investment_count',
         ]
 
-    def get_full_name(self, obj):
+    def get_full_name(self, obj) -> str:
         return obj.get_full_name()
 
-    def get_investment_count(self, obj):
-        return obj.investments.count()
+    def get_investment_count(self, obj) -> int:
+        # Annotated by AdminUserViewSet.get_queryset; fall back to a query otherwise
+        count = getattr(obj, 'investment_count', None)
+        return count if count is not None else obj.investments.count()
 
 
 class AdminUserDetailSerializer(serializers.ModelSerializer):
@@ -57,19 +58,23 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
             'investment_count', 'total_invested',
         ]
 
-    def get_full_name(self, obj):
+    def get_full_name(self, obj) -> str:
         return obj.get_full_name()
 
-    def get_investment_count(self, obj):
-        return obj.investments.count()
+    def get_investment_count(self, obj) -> int:
+        # Annotated by AdminUserViewSet.get_queryset; fall back to a query otherwise
+        count = getattr(obj, 'investment_count', None)
+        return count if count is not None else obj.investments.count()
 
-    def get_total_invested(self, obj):
+    def get_total_invested(self, obj) -> float:
         from django.db.models import Sum
         result = obj.investments.aggregate(total=Sum('total_invested'))
-        return result['total'] or 0
+        return float(result['total'] or 0)
 
-    def get_is_locked(self, obj):
-        return obj.is_account_locked()
+    def get_is_locked(self, obj) -> bool:
+        # Read-only check (User.is_account_locked() also writes when a lock expires)
+        from django.utils import timezone
+        return bool(obj.account_locked_until and obj.account_locked_until > timezone.now())
 
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):
@@ -107,7 +112,7 @@ class AdminUserActivitySerializer(serializers.ModelSerializer):
 
 class AdminOpportunityListSerializer(serializers.ModelSerializer):
     funding_progress = serializers.DecimalField(
-        source='funding_progress_percentage', max_digits=6, decimal_places=2, read_only=True
+        source='funding_progress_percentage', max_digits=8, decimal_places=2, read_only=True
     )
     investor_count = serializers.IntegerField(source='investors_count', read_only=True)
 
@@ -129,15 +134,14 @@ class AdminOpportunityDocumentSerializer(serializers.ModelSerializer):
 
 class AdminOpportunityDetailSerializer(serializers.ModelSerializer):
     funding_progress = serializers.DecimalField(
-        source='funding_progress_percentage', max_digits=6, decimal_places=2, read_only=True
+        source='funding_progress_percentage', max_digits=8, decimal_places=2, read_only=True
     )
     remaining_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     documents = AdminOpportunityDocumentSerializer(many=True, read_only=True)
 
     class Meta:
         model = MarketplaceOpportunity
-        fields = '__all__'
-        extra_fields = ['funding_progress', 'remaining_amount', 'documents']
+        fields = '__all__'  # declared fields above are included automatically
 
 
 class AdminOpportunityWriteSerializer(serializers.ModelSerializer):
@@ -163,7 +167,7 @@ class AdminInvestmentListSerializer(serializers.ModelSerializer):
             'unrealized_gain', 'investment_date', 'created_at',
         ]
 
-    def get_investment_name(self, obj):
+    def get_investment_name(self, obj) -> str:
         return obj.get_name()
 
 
@@ -171,6 +175,12 @@ class AdminCapitalActivitySerializer(serializers.ModelSerializer):
     class Meta:
         model = CapitalActivity
         fields = ['id', 'activity_type', 'amount', 'date', 'details', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def validate(self, attrs):
+        # Store amounts with the sign convention used by the IRR calculation
+        attrs['amount'] = CapitalActivity.signed_amount(attrs['activity_type'], attrs['amount'])
+        return attrs
 
 
 class AdminInvestmentDetailSerializer(serializers.ModelSerializer):
@@ -184,7 +194,7 @@ class AdminInvestmentDetailSerializer(serializers.ModelSerializer):
         model = Investment
         fields = '__all__'
 
-    def get_investment_name(self, obj):
+    def get_investment_name(self, obj) -> str:
         return obj.get_name()
 
 
@@ -216,10 +226,10 @@ class AdminTransferListSerializer(serializers.ModelSerializer):
             'status', 'is_processed', 'created_at',
         ]
 
-    def get_to_user_email(self, obj):
+    def get_to_user_email(self, obj) -> Optional[str]:
         return obj.to_user.email if obj.to_user else None
 
-    def get_investment_name(self, obj):
+    def get_investment_name(self, obj) -> str:
         return obj.investment.get_name() if obj.investment else None
 
 
@@ -232,22 +242,24 @@ class AdminTransferDetailSerializer(serializers.ModelSerializer):
         model = OwnershipTransfer
         fields = '__all__'
 
-    def get_to_user_email(self, obj):
+    def get_to_user_email(self, obj) -> Optional[str]:
         return obj.to_user.email if obj.to_user else None
 
-    def get_investment_name(self, obj):
+    def get_investment_name(self, obj) -> str:
         return obj.investment.get_name() if obj.investment else None
 
 
 class AdminSecondaryInterestSerializer(serializers.ModelSerializer):
+    """Admins review buyer interests; only the status can be changed."""
     buyer_email = serializers.EmailField(source='buyer.email', read_only=True)
     transfer_investment = serializers.SerializerMethodField()
 
     class Meta:
         model = SecondaryMarketInterest
         fields = '__all__'
+        read_only_fields = ['transfer', 'buyer', 'amount', 'interest_date', 'created_at', 'updated_at']
 
-    def get_transfer_investment(self, obj):
+    def get_transfer_investment(self, obj) -> Optional[str]:
         if obj.transfer and obj.transfer.investment:
             return obj.transfer.investment.get_name()
         return None
@@ -273,15 +285,26 @@ class AdminInvestorInterestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at']
 
-    def get_user_name(self, obj):
+    def get_user_name(self, obj) -> str:
         return obj.user.get_full_name()
 
 
 class AdminInvestorInterestUpdateSerializer(serializers.ModelSerializer):
-    """Used by admin to update status or amount of an interest."""
+    """
+    Used by admin to edit a PENDING interest's amount or date.
+    Status changes go through the convert/cancel actions.
+    """
     class Meta:
         model = InvestorInterest
         fields = ['status', 'amount', 'investment_date']
+        read_only_fields = ['status']
+
+    def validate(self, attrs):
+        if self.instance is not None and self.instance.status != 'PENDING':
+            raise serializers.ValidationError(
+                f"Only pending interests can be edited (this one is {self.instance.status})."
+            )
+        return attrs
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +329,7 @@ class AdminInvestorProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'user_id', 'user_email', 'user_name', 'created_at', 'updated_at']
 
-    def get_user_name(self, obj):
+    def get_user_name(self, obj) -> str:
         return obj.user.get_full_name()
 
 

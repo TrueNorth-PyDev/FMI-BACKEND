@@ -3,9 +3,10 @@ Serializers for the marketplace app.
 Handles marketplace opportunities, documents, tags, and user interests.
 """
 
+from typing import Optional
+
 from rest_framework import serializers
-from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest, InvestorInterest
-from decimal import Decimal
+from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestorInterest
 import logging
 
 logger = logging.getLogger('marketplace')
@@ -21,7 +22,7 @@ class OpportunityDocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'file', 'file_url', 'document_type', 'document_type_display', 'uploaded_at']
         read_only_fields = ['id', 'uploaded_at']
     
-    def get_file_url(self, obj):
+    def get_file_url(self, obj) -> Optional[str]:
         """Get full URL for the file."""
         request = self.context.get('request')
         if obj.file and request:
@@ -44,7 +45,7 @@ class MarketplaceOpportunityListSerializer(serializers.ModelSerializer):
     sector_display = serializers.CharField(source='get_sector_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     investment_type_display = serializers.CharField(source='get_investment_type_display', read_only=True)
-    funding_progress_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    funding_progress_percentage = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
     remaining_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     tags = OpportunityTagSerializer(many=True, read_only=True)
     
@@ -65,7 +66,7 @@ class MarketplaceOpportunityDetailSerializer(serializers.ModelSerializer):
     risk_level_display = serializers.CharField(source='get_risk_level_display', read_only=True)
     payout_frequency_display = serializers.CharField(source='get_payout_frequency_display', read_only=True)
     verification_type_display = serializers.CharField(source='get_verification_type_display', read_only=True)
-    funding_progress_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    funding_progress_percentage = serializers.DecimalField(max_digits=8, decimal_places=2, read_only=True)
     remaining_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
     documents = OpportunityDocumentSerializer(many=True, read_only=True)
     tags = OpportunityTagSerializer(many=True, read_only=True)
@@ -88,39 +89,6 @@ class MarketplaceOpportunityDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class InvestmentInterestSerializer(serializers.ModelSerializer):
-    """Serializer for investment interest."""
-    interest_type_display = serializers.CharField(source='get_interest_type_display', read_only=True)
-    opportunity_title = serializers.CharField(source='opportunity.title', read_only=True)
-    
-    class Meta:
-        model = InvestmentInterest
-        fields = ['id', 'opportunity', 'opportunity_title', 'interest_type', 
-                  'interest_type_display', 'created_at']
-        read_only_fields = ['id', 'created_at']
-    
-    def create(self, validated_data):
-        """Create investment interest with user from context."""
-        validated_data['user'] = self.context['request'].user
-        
-        # Check if already exists
-        existing = InvestmentInterest.objects.filter(
-            user=validated_data['user'],
-            opportunity=validated_data['opportunity'],
-            interest_type=validated_data['interest_type']
-        ).first()
-        
-        if existing:
-            return existing
-        
-        interest = InvestmentInterest.objects.create(**validated_data)
-        logger.info(
-            f"Investment interest created: {interest.user.email} {interest.interest_type} "
-            f"in {interest.opportunity.title}"
-        )
-        return interest
-
-
 class InvestorInterestSerializer(serializers.ModelSerializer):
     """Serializer for investor interest expression."""
     user_email = serializers.EmailField(source='user.email', read_only=True)
@@ -134,13 +102,43 @@ class InvestorInterestSerializer(serializers.ModelSerializer):
             'amount', 'investment_date', 'status', 'status_display',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        # Investors can create, edit and cancel pledges; converting a pledge into an
+        # investment is a staff action (/api/admin/investor-interests/{id}/convert/).
+        read_only_fields = ['id', 'status', 'created_at', 'updated_at']
+
+    OPEN_STATUSES = ('NEW', 'ACTIVE', 'CLOSING_SOON')
 
     def validate_amount(self, value):
         """Ensure investment amount is positive."""
         if value <= 0:
             raise serializers.ValidationError("Investment amount must be greater than zero.")
         return value
+
+    def validate(self, attrs):
+        instance = self.instance
+        if instance is not None:
+            if instance.status != 'PENDING':
+                raise serializers.ValidationError(
+                    f"This pledge is {instance.status.lower()} and can no longer be changed."
+                )
+            if 'opportunity' in attrs and attrs['opportunity'].pk != instance.opportunity_id:
+                raise serializers.ValidationError({"opportunity": "The opportunity of a pledge cannot be changed."})
+
+        opportunity = attrs.get('opportunity') or getattr(instance, 'opportunity', None)
+        amount = attrs.get('amount')
+        if opportunity is not None:
+            if instance is None and opportunity.status not in self.OPEN_STATUSES:
+                raise serializers.ValidationError({"opportunity": "This opportunity is not open for investment."})
+            if amount is not None:
+                if amount < opportunity.min_investment:
+                    raise serializers.ValidationError(
+                        {"amount": f"Minimum investment is {opportunity.min_investment}."}
+                    )
+                if amount > opportunity.remaining_amount:
+                    raise serializers.ValidationError(
+                        {"amount": f"Amount exceeds the remaining capacity ({opportunity.remaining_amount})."}
+                    )
+        return attrs
 
     def create(self, validated_data):
         """Create investor interest with user from context."""

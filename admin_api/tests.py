@@ -243,16 +243,40 @@ class AdminUserManagementTests(TestCase):
         self.assertEqual(self.user.failed_login_attempts, 0)
         self.assertIsNone(self.user.account_locked_until)
 
+    def _superuser_client(self):
+        self.admin.is_superuser = True
+        self.admin.save(update_fields=['is_superuser'])
+        return authed_client(self.admin)
+
     def test_make_staff(self):
-        res = self.client.post(f'/api/admin/users/{self.user.id}/make-staff/')
+        res = self._superuser_client().post(f'/api/admin/users/{self.user.id}/make-staff/')
         self.assertEqual(res.status_code, 200)
         self.user.refresh_from_db()
         self.assertTrue(self.user.is_staff)
 
+    def test_staff_cannot_grant_staff(self):
+        res = self.client.post(f'/api/admin/users/{self.user.id}/make-staff/')
+        self.assertEqual(res.status_code, 403)
+        res = self.client.patch(f'/api/admin/users/{self.user.id}/', {'is_staff': True}, format='json')
+        self.assertEqual(res.status_code, 403)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_staff)
+
+    def test_staff_cannot_suspend_or_delete_other_staff(self):
+        other_staff = make_user('staff2@test.com', is_staff=True)
+        self.assertEqual(self.client.post(f'/api/admin/users/{other_staff.id}/suspend/').status_code, 403)
+        self.assertEqual(self.client.delete(f'/api/admin/users/{other_staff.id}/').status_code, 403)
+        other_staff.refresh_from_db()
+        self.assertTrue(other_staff.is_active)
+
+    def test_admin_cannot_create_users_directly(self):
+        res = self.client.post('/api/admin/users/', {'email': 'new@test.com'}, format='json')
+        self.assertEqual(res.status_code, 405)
+
     def test_remove_staff_from_other_user(self):
         self.user.is_staff = True
         self.user.save(update_fields=['is_staff'])
-        res = self.client.post(f'/api/admin/users/{self.user.id}/remove-staff/')
+        res = self._superuser_client().post(f'/api/admin/users/{self.user.id}/remove-staff/')
         self.assertEqual(res.status_code, 200)
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_staff)
@@ -805,3 +829,38 @@ class AdminInvestorInterestTests(TestCase):
         investor_client = authed_client(self.investor)
         res = investor_client.get('/api/admin/investor-interests/')
         self.assertEqual(res.status_code, 403)
+
+
+class AdminListQueryCountTests(TestCase):
+    """List endpoints must not run a query per row."""
+
+    def setUp(self):
+        self.admin = make_user('qc_admin@test.com', is_staff=True)
+        self.client = authed_client(self.admin)
+        self.opp = make_opportunity()
+
+    def _add_rows(self, n):
+        for i in range(n):
+            seller = make_user(f'qc_seller{self._counter}@test.com')
+            self._counter += 1
+            inv = make_investment(seller, self.opp)
+            OwnershipTransfer.objects.create(
+                investment=inv, from_user=seller, transfer_type='PARTIAL', percentage=10,
+                transfer_amount=Decimal('100'), reason='x', status='PENDING',
+            )
+
+    def _queries_for(self, url):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            self.assertEqual(self.client.get(url).status_code, 200)
+        return len(ctx.captured_queries)
+
+    def test_list_endpoints_scale_flat(self):
+        self._counter = 0
+        urls = ['/api/admin/users/', '/api/admin/investments/', '/api/admin/transfers/']
+        self._add_rows(2)
+        before = {url: self._queries_for(url) for url in urls}
+        self._add_rows(5)
+        after = {url: self._queries_for(url) for url in urls}
+        self.assertEqual(before, after)

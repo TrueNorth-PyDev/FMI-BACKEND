@@ -84,21 +84,65 @@ def get_location_from_ip(ip_address):
     return "Unknown Location"
 
 
+def create_session(user, request, refresh, ip_address):
+    """
+    Record a login session keyed by the refresh token's JTI, mark it current,
+    and prune the user's oldest sessions.
+    """
+    from .models import UserSession
+
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    UserSession.objects.filter(user=user, is_current=True).update(is_current=False)
+    session = UserSession.objects.create(
+        user=user,
+        device_name=parse_device_name(user_agent),
+        location=get_location_from_ip(ip_address),
+        ip_address=ip_address,
+        user_agent=user_agent,
+        is_current=True,
+        session_key=str(refresh['jti']),
+    )
+    cleanup_old_sessions(user)
+    return session
+
+
+def revoke_sessions(sessions):
+    """
+    Blacklist the refresh tokens behind the given UserSession queryset and delete
+    the sessions. Access tokens already issued expire on their own (15 minutes).
+
+    Returns the number of sessions removed.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+
+    session_keys = list(sessions.values_list('session_key', flat=True))
+    outstanding = OutstandingToken.objects.filter(jti__in=session_keys)
+    BlacklistedToken.objects.bulk_create(
+        [BlacklistedToken(token=token) for token in outstanding],
+        ignore_conflicts=True,
+    )
+    count, _ = sessions.delete()
+    return count
+
+
 def cleanup_old_sessions(user, max_sessions=10):
     """
     Clean up old sessions, keeping only the most recent ones.
+    Pruned sessions have their refresh tokens revoked.
     
     Args:
         user: User instance
         max_sessions (int): Maximum number of sessions to keep
     """
     from .models import UserSession
-    
-    sessions = UserSession.objects.filter(user=user).order_by('-last_activity')
 
-    if sessions.count() > max_sessions:
-        # Collect PKs of sessions beyond the limit first — Django forbids
-        # calling .delete() directly on a sliced queryset (LIMIT/OFFSET).
-        ids_to_delete = list(sessions[max_sessions:].values_list('pk', flat=True))
-        deleted_count, _ = UserSession.objects.filter(pk__in=ids_to_delete).delete()
+    # Collect PKs of sessions beyond the limit first — Django forbids
+    # calling .delete() directly on a sliced queryset (LIMIT/OFFSET).
+    ids_to_delete = list(
+        UserSession.objects.filter(user=user)
+        .order_by('-last_activity')
+        .values_list('pk', flat=True)[max_sessions:]
+    )
+    if ids_to_delete:
+        deleted_count = revoke_sessions(UserSession.objects.filter(pk__in=ids_to_delete))
         logger.info(f"Cleaned up {deleted_count} old sessions for {user.email}")

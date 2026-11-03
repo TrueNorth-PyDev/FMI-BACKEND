@@ -3,7 +3,6 @@ Comprehensive tests for the marketplace app.
 Covers: opportunity listing/filtering/detail, watchlist, request_information,
         InvestorInterest CRUD and new status field, secondary marketplace interactions.
 """
-from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework import status
@@ -178,25 +177,64 @@ class InvestorInterestTests(APITestCase):
         )
         self.assertEqual(interest.status, 'PENDING')
 
-    def test_status_can_be_updated_to_converted(self):
+    def test_user_cannot_convert_own_pledge(self):
+        """Status is read-only for investors: a CONVERTED patch is ignored."""
         interest = InvestorInterest.objects.create(
             user=self.user, opportunity=self.opp,
-            amount=Decimal('5000.00'), investment_date='2026-06-01'
+            amount=Decimal('15000.00'), investment_date='2026-06-01'
         )
         url = reverse('marketplace:investor-interest-detail', args=[interest.id])
         response = self.client.patch(url, {'status': 'CONVERTED'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         interest.refresh_from_db()
-        self.assertEqual(interest.status, 'CONVERTED')
+        self.assertEqual(interest.status, 'PENDING')
+        from investments.models import Investment
+        self.assertFalse(Investment.objects.filter(user=self.user).exists())
 
-    def test_invalid_status_rejected(self):
+    def test_user_can_cancel_pending_pledge(self):
         interest = InvestorInterest.objects.create(
             user=self.user, opportunity=self.opp,
-            amount=Decimal('5000.00'), investment_date='2026-06-01'
+            amount=Decimal('15000.00'), investment_date='2026-06-01'
+        )
+        url = reverse('marketplace:investor-interest-cancel', args=[interest.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        interest.refresh_from_db()
+        self.assertEqual(interest.status, 'CANCELLED')
+
+    def test_cancelled_pledge_cannot_be_edited(self):
+        interest = InvestorInterest.objects.create(
+            user=self.user, opportunity=self.opp, status='CANCELLED',
+            amount=Decimal('15000.00'), investment_date='2026-06-01'
         )
         url = reverse('marketplace:investor-interest-detail', args=[interest.id])
-        response = self.client.patch(url, {'status': 'INVALID_STATUS'})
+        response = self.client.patch(url, {'amount': '20000.00'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_pledge_below_minimum_rejected(self):
+        data = {'opportunity': self.opp.id, 'amount': '500.00', 'investment_date': '2026-06-01'}
+        response = self.client.post(self.list_url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_pledge_above_remaining_capacity_rejected(self):
+        data = {'opportunity': self.opp.id, 'amount': '600000.00', 'investment_date': '2026-06-01'}
+        response = self.client.post(self.list_url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_pledge_on_closed_opportunity_rejected(self):
+        closed = make_opportunity(title='Closed', status='CLOSED')
+        data = {'opportunity': closed.id, 'amount': '20000.00', 'investment_date': '2026-06-01'}
+        response = self.client.post(self.list_url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_pledge_cannot_be_deleted_by_user(self):
+        interest = InvestorInterest.objects.create(
+            user=self.user, opportunity=self.opp,
+            amount=Decimal('15000.00'), investment_date='2026-06-01'
+        )
+        url = reverse('marketplace:investor-interest-detail', args=[interest.id])
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
     def test_user_only_sees_own_interests(self):
         other = make_user(email='other@example.com')
@@ -225,8 +263,8 @@ class InvestorInterestTests(APITestCase):
 
 class InvestorInterestConversionTests(APITestCase):
     """
-    Tests that setting InvestorInterest.status = 'CONVERTED' automatically
-    creates a matching Investment record (and a CapitalActivity entry).
+    Staff converting an InvestorInterest (pledge) creates or tops up the
+    investor's Investment and records a CapitalActivity.
     """
 
     def setUp(self):
@@ -235,7 +273,8 @@ class InvestorInterestConversionTests(APITestCase):
         self.CapitalActivity = CapitalActivity
 
         self.user = make_user(email='converter@example.com')
-        self.client.force_authenticate(user=self.user)
+        self.admin = make_user(email='staff@example.com', is_staff=True)
+        self.client.force_authenticate(user=self.admin)
         self.opp = make_opportunity(
             title='Auto-Convert Opp',
             sector='FINTECH',
@@ -248,26 +287,25 @@ class InvestorInterestConversionTests(APITestCase):
             amount=Decimal('10000.00'),
             investment_date='2026-07-01',
         )
-        self.detail_url = reverse('marketplace:investor-interest-detail', args=[self.interest.id])
+        self.convert_url = f'/api/admin/investor-interests/{self.interest.id}/convert/'
 
     def test_conversion_creates_investment(self):
-        """Patching status to CONVERTED should create an Investment with correct fields."""
-        response = self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        response = self.client.post(self.convert_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        # Investment must exist
         inv = self.Investment.objects.filter(user=self.user, opportunity=self.opp).first()
         self.assertIsNotNone(inv, "Investment should have been created on CONVERTED transition")
-
-        # Field values
         self.assertEqual(inv.total_invested, Decimal('10000.00'))
         self.assertEqual(inv.current_value, Decimal('10000.00'))
         self.assertEqual(str(inv.investment_date), '2026-07-01')
         self.assertEqual(inv.status, 'ACTIVE')
 
+        self.opp.refresh_from_db()
+        self.assertEqual(self.opp.current_raised_amount, Decimal('10000.00'))
+        self.assertEqual(self.opp.investors_count, 1)
+
     def test_conversion_creates_capital_activity(self):
-        """A CONVERTED interest should produce an INITIAL_INVESTMENT CapitalActivity."""
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        self.client.post(self.convert_url)
         inv = self.Investment.objects.get(user=self.user, opportunity=self.opp)
         activity = self.CapitalActivity.objects.filter(
             investment=inv,
@@ -277,22 +315,68 @@ class InvestorInterestConversionTests(APITestCase):
         self.assertEqual(activity.amount, -Decimal('10000.00'))
 
     def test_conversion_is_idempotent(self):
-        """
-        If the interest is already CONVERTED, saving it again should NOT
-        create a second Investment or inflate the existing one.
-        """
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
-        # Save again with no status change (already CONVERTED)
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
-
-        count = self.Investment.objects.filter(user=self.user, opportunity=self.opp).count()
-        self.assertEqual(count, 1, "Only one Investment should exist after duplicate CONVERTED saves")
+        self.client.post(self.convert_url)
+        response = self.client.post(self.convert_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
         inv = self.Investment.objects.get(user=self.user, opportunity=self.opp)
         self.assertEqual(inv.total_invested, Decimal('10000.00'), "total_invested should not be doubled")
 
+    def test_converted_status_is_final(self):
+        """Toggling CONVERTED → PENDING → CONVERTED must not credit the investor twice."""
+        from django.core.exceptions import ValidationError
+        self.client.post(self.convert_url)
+        self.interest.refresh_from_db()
+        self.interest.status = 'PENDING'
+        with self.assertRaises(ValidationError):
+            self.interest.save()
+        inv = self.Investment.objects.get(user=self.user, opportunity=self.opp)
+        self.assertEqual(inv.total_invested, Decimal('10000.00'))
+
+    def test_second_pledge_tops_up_existing_investment(self):
+        self.client.post(self.convert_url)
+        second = InvestorInterest.objects.create(
+            user=self.user, opportunity=self.opp,
+            amount=Decimal('5000.00'), investment_date='2026-08-01',
+        )
+        response = self.client.post(f'/api/admin/investor-interests/{second.id}/convert/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        inv = self.Investment.objects.get(user=self.user, opportunity=self.opp)
+        self.assertEqual(inv.total_invested, Decimal('15000.00'))
+        self.opp.refresh_from_db()
+        self.assertEqual(self.opp.current_raised_amount, Decimal('15000.00'))
+        self.assertEqual(self.opp.investors_count, 1)
+
+    def test_conversion_beyond_capacity_rolls_back(self):
+        """Over-funding is reported as a 400 and the pledge stays PENDING."""
+        self.opp.current_raised_amount = Decimal('195000.00')
+        self.opp.save(update_fields=['current_raised_amount'])
+        response = self.client.post(self.convert_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.interest.refresh_from_db()
+        self.assertEqual(self.interest.status, 'PENDING')
+        self.assertFalse(self.Investment.objects.filter(user=self.user).exists())
+
+    def test_reaching_target_closes_opportunity(self):
+        self.interest.amount = Decimal('200000.00')
+        self.interest.save(update_fields=['amount'])
+        self.client.post(self.convert_url)
+        self.opp.refresh_from_db()
+        self.assertEqual(self.opp.status, 'CLOSED')
+
     def test_no_conversion_on_cancelled(self):
-        """Setting status to CANCELLED must NOT create an Investment."""
-        self.client.patch(self.detail_url, {'status': 'CANCELLED'})
+        """Cancelling must NOT create an Investment."""
+        self.client.post(f'/api/admin/investor-interests/{self.interest.id}/cancel/')
         exists = self.Investment.objects.filter(user=self.user, opportunity=self.opp).exists()
         self.assertFalse(exists, "No Investment should be created when status is CANCELLED")
+
+
+class RemoveBookmarkClosedOpportunityTests(APITestCase):
+    def test_can_remove_bookmark_of_closed_opportunity(self):
+        user = make_user()
+        self.client.force_authenticate(user=user)
+        opp = make_opportunity(status='CLOSED')
+        InvestmentInterest.objects.create(user=user, opportunity=opp, interest_type='BOOKMARKED')
+        response = self.client.delete(reverse('marketplace:opportunity-remove-bookmark', args=[opp.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(InvestmentInterest.objects.filter(user=user, opportunity=opp).exists())

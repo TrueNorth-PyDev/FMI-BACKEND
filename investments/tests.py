@@ -5,7 +5,7 @@ from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from decimal import Decimal
-from .models import Investment, OwnershipTransfer, CapitalActivity, SecondaryMarketInterest
+from .models import Investment, OwnershipTransfer, CapitalActivity, SecondaryMarketInterest, PerformanceSnapshot
 
 User = get_user_model()
 
@@ -291,7 +291,11 @@ class SecondaryMarketInterestConversionTests(APITestCase):
             username='buyer2', email='buyer2@example.com',
             password='Password123!', is_email_verified=True
         )
-        self.client.force_authenticate(user=self.buyer)
+        self.admin = User.objects.create_user(
+            username='staff2', email='staff2@example.com',
+            password='Password123!', is_email_verified=True, is_staff=True
+        )
+        self.client.force_authenticate(user=self.admin)
 
         self.seller_investment = Investment.objects.create(
             user=self.seller,
@@ -315,22 +319,54 @@ class SecondaryMarketInterestConversionTests(APITestCase):
             buyer=self.buyer,
             amount=Decimal('30000.00'),
         )
-        self.detail_url = reverse(
-            'investments:secondary-market-interest-detail', args=[self.interest.id]
-        )
+        # Staff execute the purchase via the admin API
+        self.detail_url = f'/api/admin/secondary-interests/{self.interest.id}/'
 
     def test_conversion_deducts_from_seller(self):
         """CONVERTED status should deduct from the seller's investment."""
-        response = self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        response = self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         self.seller_investment.refresh_from_db()
         self.assertEqual(self.seller_investment.current_value, Decimal('80000.00'))
-        self.assertEqual(self.seller_investment.total_invested, Decimal('70000.00'))
+        # Cost basis is reduced in proportion to the value sold: 100000 × 30000/110000
+        self.assertEqual(self.seller_investment.total_invested, Decimal('72727.27'))
+
+    def test_buyer_cannot_convert_own_interest(self):
+        """Buyers may only cancel; a CONVERTED patch from the buyer is ignored."""
+        self.client.force_authenticate(user=self.buyer)
+        url = reverse('investments:secondary-market-interest-detail', args=[self.interest.id])
+        self.client.patch(url, {'status': 'CONVERTED'})
+        self.interest.refresh_from_db()
+        self.assertEqual(self.interest.status, 'PENDING')
+        self.seller_investment.refresh_from_db()
+        self.assertEqual(self.seller_investment.current_value, Decimal('110000.00'))
+
+    def test_buyer_can_cancel_interest(self):
+        self.client.force_authenticate(user=self.buyer)
+        url = reverse('investments:secondary-market-interest-cancel', args=[self.interest.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.interest.refresh_from_db()
+        self.assertEqual(self.interest.status, 'CANCELLED')
+
+    def test_competing_interests_cancelled_on_conversion(self):
+        other = User.objects.create_user(
+            username='buyer3', email='buyer3@example.com', password='Password123!', is_email_verified=True
+        )
+        competing = SecondaryMarketInterest.objects.create(
+            transfer=self.transfer, buyer=other, amount=Decimal('10000.00')
+        )
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
+        competing.refresh_from_db()
+        self.assertEqual(competing.status, 'CANCELLED')
+        response = self.client.patch(f'/api/admin/secondary-interests/{competing.id}/',
+                                     {'status': 'CONVERTED'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_conversion_creates_buyer_investment(self):
         """CONVERTED status should create a new Investment for the buyer."""
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
 
         buyer_inv = Investment.objects.filter(user=self.buyer).first()
         self.assertIsNotNone(buyer_inv, 'Buyer Investment should be created')
@@ -340,7 +376,7 @@ class SecondaryMarketInterestConversionTests(APITestCase):
 
     def test_conversion_creates_capital_activities(self):
         """Both a PARTIAL_EXIT (seller) and INITIAL_INVESTMENT (buyer) should be logged."""
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
 
         buyer_inv = Investment.objects.get(user=self.buyer)
 
@@ -360,11 +396,12 @@ class SecondaryMarketInterestConversionTests(APITestCase):
 
     def test_transfer_marked_completed(self):
         """The OwnershipTransfer should be COMPLETED and is_processed=True after conversion."""
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
 
         self.transfer.refresh_from_db()
         self.assertEqual(self.transfer.status, 'COMPLETED')
         self.assertTrue(self.transfer.is_processed)
+        self.assertEqual(self.transfer.to_user, self.buyer)
 
     def test_full_transfer_exits_seller(self):
         """If the transferred amount equals seller's entire current_value, mark seller EXITED
@@ -377,7 +414,7 @@ class SecondaryMarketInterestConversionTests(APITestCase):
         self.transfer.transfer_amount = Decimal('110000.00')
         self.transfer.save(update_fields=['transfer_amount', 'transfer_fee', 'net_amount'])
 
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
 
         self.seller_investment.refresh_from_db()
         self.assertEqual(self.seller_investment.status, 'EXITED')
@@ -402,8 +439,9 @@ class SecondaryMarketInterestConversionTests(APITestCase):
 
     def test_conversion_is_idempotent(self):
         """Patching CONVERTED twice should not double-deduct or double-credit."""
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})
-        self.client.patch(self.detail_url, {'status': 'CONVERTED'})  # no-op
+        self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
+        response = self.client.patch(self.detail_url, {'status': 'CONVERTED'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
         self.seller_investment.refresh_from_db()
         # Deducted exactly once
@@ -605,3 +643,449 @@ class TransferDoesNotAffectRaisedAmountTests(TestCase):
             self.opportunity.current_raised_amount, raised_after_buyer_joins,
             'current_raised_amount must not change when buyer investment is topped up via transfer'
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for access control and money-movement fixes
+# ---------------------------------------------------------------------------
+
+def _user(name, **kwargs):
+    return User.objects.create_user(
+        username=name, email=f'{name}@example.com', password='Password123!',
+        is_email_verified=True, **kwargs
+    )
+
+
+def _opportunity(**kwargs):
+    defaults = dict(
+        title='Fund', description='d', sector='TECHNOLOGY', status='ACTIVE',
+        min_investment=Decimal('100.00'), target_raise_amount=Decimal('100000.00'),
+        target_irr=Decimal('12.00'), investment_term_years=5,
+    )
+    defaults.update(kwargs)
+    return MarketplaceOpportunity.objects.create(**defaults)
+
+
+class InvestmentReadOnlyTests(APITestCase):
+    def setUp(self):
+        self.user = _user('reader')
+        self.client.force_authenticate(user=self.user)
+        self.investment = Investment.objects.create(
+            user=self.user, name='A', total_invested=Decimal('1000'),
+            current_value=Decimal('1000'), investment_date=timezone.now().date(),
+        )
+
+    def test_user_cannot_create_investment(self):
+        response = self.client.post('/api/investments/', {
+            'name': 'Fake', 'total_invested': '1', 'current_value': '1000000',
+            'investment_date': '2026-01-01',
+        })
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_user_cannot_edit_investment_value(self):
+        response = self.client.patch(f'/api/investments/{self.investment.id}/', {'current_value': '999999'})
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_user_cannot_record_capital_activity(self):
+        response = self.client.post('/api/capital-activities/', {
+            'investment': self.investment.id, 'activity_type': 'DISTRIBUTION',
+            'amount': '10', 'date': '2026-01-01',
+        })
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_capital_activities_list(self):
+        CapitalActivity.objects.create(investment=self.investment, activity_type='DISTRIBUTION',
+                                       amount=Decimal('5'), date=timezone.now().date())
+        response = self.client.get('/api/capital-activities/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+
+    def test_bad_days_param_returns_400(self):
+        response = self.client.get(f'/api/investments/{self.investment.id}/performance_history/?days=abc')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class OwnershipTransferApiTests(APITestCase):
+    def setUp(self):
+        self.seller = _user('owner')
+        self.recipient = _user('recipient')
+        self.client.force_authenticate(user=self.seller)
+        self.investment = Investment.objects.create(
+            user=self.seller, name='A', total_invested=Decimal('1000'),
+            current_value=Decimal('1000'), investment_date=timezone.now().date(),
+        )
+
+    def _payload(self, **kwargs):
+        data = {'investment': self.investment.id, 'to_user': self.recipient.id, 'transfer_type': 'PARTIAL',
+                'percentage': '50', 'transfer_amount': '500', 'reason': 'x'}
+        data.update(kwargs)
+        return data
+
+    def test_cannot_create_transfer_already_completed(self):
+        response = self.client.post('/api/transfers/', self._payload(status='COMPLETED'))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Investment.objects.filter(user=self.recipient).exists())
+        self.investment.refresh_from_db()
+        self.assertEqual(self.investment.current_value, Decimal('1000.00'))
+
+    def test_can_create_transfer_as_pending(self):
+        response = self.client.post('/api/transfers/', self._payload(status='PENDING'))
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(OwnershipTransfer.objects.get().status, 'PENDING')
+
+    def test_transfer_amount_cannot_exceed_value(self):
+        response = self.client.post('/api/transfers/', self._payload(transfer_amount='5000'))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_draft_can_be_edited(self):
+        self.client.post('/api/transfers/', self._payload())
+        transfer = OwnershipTransfer.objects.get()
+        response = self.client.patch(f'/api/transfers/{transfer.id}/', {'transfer_amount': '600'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.transfer_amount, Decimal('600.00'))
+
+    def test_pending_transfer_cannot_be_edited(self):
+        self.client.post('/api/transfers/', self._payload(status='PENDING'))
+        transfer = OwnershipTransfer.objects.get()
+        response = self.client.patch(f'/api/transfers/{transfer.id}/', {'transfer_amount': '600'})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_recipient_cannot_edit_transfer(self):
+        self.client.post('/api/transfers/', self._payload())
+        transfer = OwnershipTransfer.objects.get()
+        self.client.force_authenticate(user=self.recipient)
+        response = self.client.patch(f'/api/transfers/{transfer.id}/', {'transfer_amount': '600'})
+        self.assertIn(response.status_code, (status.HTTP_400_BAD_REQUEST, status.HTTP_403_FORBIDDEN))
+
+    def test_direct_transfer_not_listed_on_secondary_market(self):
+        self.client.post('/api/transfers/', self._payload(status='PENDING'))
+        transfer = OwnershipTransfer.objects.get()
+        sniper = _user('sniper')
+        self.client.force_authenticate(user=sniper)
+        self.assertEqual(self.client.get('/api/secondary-market/').data['count'], 0)
+        response = self.client.post(f'/api/secondary-market/{transfer.id}/express_interest/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_full_transfer_moves_whole_position(self):
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.investment, from_user=self.seller, to_user=self.recipient,
+            transfer_type='FULL', transfer_amount=Decimal('400'), reason='x', status='APPROVED',
+        )
+        transfer.status = 'COMPLETED'
+        transfer.save()
+        self.investment.refresh_from_db()
+        self.assertEqual(self.investment.status, 'EXITED')
+        recipient_inv = Investment.objects.get(user=self.recipient)
+        self.assertEqual(recipient_inv.current_value, Decimal('1000.00'))
+        self.assertTrue(CapitalActivity.objects.filter(investment=self.investment, activity_type='FULL_EXIT').exists())
+
+
+class AdminTransferCompletionTests(APITestCase):
+    def setUp(self):
+        self.admin = _user('boss', is_staff=True)
+        self.seller = _user('seller9')
+        self.client.force_authenticate(user=self.admin)
+        self.investment = Investment.objects.create(
+            user=self.seller, name='A', total_invested=Decimal('1000'),
+            current_value=Decimal('1000'), investment_date=timezone.now().date(),
+        )
+
+    def test_completing_transfer_without_recipient_fails_cleanly(self):
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.investment, from_user=self.seller, to_email='someone@example.com',
+            transfer_type='PARTIAL', percentage=10, transfer_amount=Decimal('100'),
+            reason='x', status='APPROVED',
+        )
+        response = self.client.post(f'/api/admin/transfers/{transfer.id}/complete/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'APPROVED')
+        self.assertFalse(transfer.is_processed)
+
+
+class SecondarySaleFullyFundedOpportunityTests(TestCase):
+    def test_secondary_sale_of_fully_funded_opportunity(self):
+        """Fully funded opportunities must still allow ownership to change hands."""
+        seller, buyer = _user('fseller'), _user('fbuyer')
+        opp = _opportunity(target_raise_amount=Decimal('1000.00'))
+        inv = Investment.objects.create(user=seller, opportunity=opp, total_invested=Decimal('1000'),
+                                        current_value=Decimal('1000'), investment_date=timezone.now().date())
+        opp.refresh_from_db()
+        self.assertEqual(opp.status, 'CLOSED')
+        transfer = OwnershipTransfer.objects.create(
+            investment=inv, from_user=seller, transfer_type='PARTIAL', percentage=50,
+            transfer_amount=Decimal('500'), reason='x', status='PENDING',
+        )
+        interest = SecondaryMarketInterest.objects.create(transfer=transfer, buyer=buyer, amount=Decimal('500'))
+        interest.status = 'CONVERTED'
+        interest.save()
+        inv.refresh_from_db()
+        self.assertEqual(inv.current_value, Decimal('500.00'))
+        self.assertEqual(Investment.objects.get(user=buyer).current_value, Decimal('500.00'))
+        opp.refresh_from_db()
+        self.assertEqual(opp.current_raised_amount, Decimal('1000.00'))
+        self.assertEqual(opp.investors_count, 2)
+
+
+class DailyAccrualTests(TestCase):
+    def setUp(self):
+        from io import StringIO
+        self.out = StringIO()
+        self.user = _user('accruer')
+        self.opp = _opportunity()
+        self.investment = Investment.objects.create(
+            user=self.user, opportunity=self.opp, total_invested=Decimal('1000'),
+            current_value=Decimal('1000'), investment_date=timezone.now().date(),
+        )
+        self.today = timezone.now().date()
+
+    def _accrue(self):
+        from django.core.management import call_command
+        call_command('accrue_daily_irr', stdout=self.out)
+        self.investment.refresh_from_db()
+
+    def _expected(self, days):
+        from investments.management.commands.accrue_daily_irr import daily_rate_for
+        rate = daily_rate_for(Decimal('12.00'))
+        return (Decimal('1000') * (1 + rate) ** days).quantize(Decimal('0.01'))
+
+    def test_new_investment_not_accrued_on_creation_day(self):
+        self._accrue()
+        self.assertEqual(self.investment.current_value, Decimal('1000.00'))
+
+    def test_missed_days_are_backfilled(self):
+        Investment.objects.filter(pk=self.investment.pk).update(
+            last_accrued_date=self.today - timezone.timedelta(days=5)
+        )
+        self._accrue()
+        self.assertEqual(self.investment.current_value, self._expected(5))
+        self.assertEqual(self.investment.last_accrued_date, self.today)
+        self.assertEqual(
+            PerformanceSnapshot.objects.filter(
+                investment=self.investment, date__gt=self.today - timezone.timedelta(days=5)
+            ).count(), 5
+        )
+
+    def test_backfill_survives_an_intervening_save(self):
+        """An ordinary save (which snapshots today's value) must not swallow missed days."""
+        Investment.objects.filter(pk=self.investment.pk).update(
+            last_accrued_date=self.today - timezone.timedelta(days=5)
+        )
+        self.investment.refresh_from_db()
+        self.investment.manager = 'edited'
+        self.investment.save()
+        self._accrue()
+        self.assertEqual(self.investment.current_value, self._expected(5))
+
+    def test_accrual_is_idempotent_within_a_day(self):
+        Investment.objects.filter(pk=self.investment.pk).update(
+            last_accrued_date=self.today - timezone.timedelta(days=1)
+        )
+        self._accrue()
+        self._accrue()
+        self.assertEqual(self.investment.current_value, self._expected(1))
+
+    def test_accrual_works_on_fully_funded_opportunity(self):
+        MarketplaceOpportunity.objects.filter(pk=self.opp.pk).update(
+            current_raised_amount=self.opp.target_raise_amount + 1  # drifted over target
+        )
+        Investment.objects.filter(pk=self.investment.pk).update(
+            last_accrued_date=self.today - timezone.timedelta(days=1)
+        )
+        self._accrue()
+        self.assertEqual(self.investment.current_value, self._expected(1))
+
+
+class AnalyticsCashFlowTests(TestCase):
+    def test_sale_is_not_a_drawdown(self):
+        """Selling part of a position is a cash flow, not a loss."""
+        from investments.utils import calculate_max_drawdown
+        seller, buyer = _user('dd_seller'), _user('dd_buyer')
+        inv = Investment.objects.create(user=seller, name='A', total_invested=Decimal('1000'),
+                                        current_value=Decimal('1000'), investment_date=timezone.now().date())
+        yesterday = timezone.now().date() - timezone.timedelta(days=1)
+        PerformanceSnapshot.objects.filter(investment=inv).update(date=yesterday)
+        transfer = OwnershipTransfer.objects.create(
+            investment=inv, from_user=seller, transfer_type='PARTIAL', percentage=50,
+            transfer_amount=Decimal('500'), reason='x', status='PENDING',
+        )
+        interest = SecondaryMarketInterest.objects.create(transfer=transfer, buyer=buyer, amount=Decimal('500'))
+        interest.status = 'CONVERTED'
+        interest.save()
+        self.assertEqual(calculate_max_drawdown(seller), Decimal('0.00'))
+
+    def test_quarterly_performance_is_deterministic(self):
+        from investments.utils import calculate_quarterly_performance
+        user = _user('q_user')
+        Investment.objects.create(user=user, name='A', total_invested=Decimal('1000'),
+                                  current_value=Decimal('1000'), investment_date=timezone.now().date())
+        first = calculate_quarterly_performance(user)
+        self.assertEqual(first, calculate_quarterly_performance(user))
+        self.assertEqual(len(first), 4)
+        self.assertEqual(len({q['quarter'] for q in first}), 4)
+
+
+class RealizedGainAndPrimaryCapitalTests(TestCase):
+    def setUp(self):
+        self.seller, self.buyer = _user('rg_seller'), _user('rg_buyer')
+        self.opp = _opportunity(target_raise_amount=Decimal('10000.00'))
+        self.investment = Investment.objects.create(
+            user=self.seller, opportunity=self.opp, total_invested=Decimal('1000'),
+            current_value=Decimal('1000'), investment_date=timezone.now().date(),
+        )
+        # Value has grown 50% since purchase
+        Investment.objects.filter(pk=self.investment.pk).update(current_value=Decimal('1500'))
+
+    def _sell(self, amount):
+        transfer = OwnershipTransfer.objects.create(
+            investment=self.investment, from_user=self.seller, transfer_type='PARTIAL', percentage=50,
+            transfer_amount=Decimal(amount), reason='x', status='PENDING',
+        )
+        interest = SecondaryMarketInterest.objects.create(transfer=transfer, buyer=self.buyer, amount=Decimal(amount))
+        interest.status = 'CONVERTED'
+        interest.save()
+
+    def test_realized_gain_is_proceeds_minus_cost_basis(self):
+        from investments.utils import calculate_returns_analysis
+        self._sell('750')  # half the position: proceeds 750, cost basis 500
+        analysis = calculate_returns_analysis(self.seller)
+        self.assertEqual(analysis['cash_received'], Decimal('750.00'))
+        self.assertEqual(analysis['realized_gains'], Decimal('250.00'))
+        exit_activity = CapitalActivity.objects.get(investment=self.investment, activity_type='PARTIAL_EXIT')
+        self.assertEqual(exit_activity.cost_basis, Decimal('500.00'))
+
+    def _assert_raised_equals_primary_capital(self):
+        from django.db.models import Sum
+        self.opp.refresh_from_db()
+        total = Investment.objects.filter(opportunity=self.opp).aggregate(t=Sum('primary_capital'))['t']
+        self.assertEqual(self.opp.current_raised_amount, total or Decimal('0.00'))
+
+    def test_primary_capital_moves_with_ownership(self):
+        self.investment.refresh_from_db()
+        self.assertEqual(self.investment.primary_capital, Decimal('1000.00'))
+        self._sell('750')  # half the position
+        self.investment.refresh_from_db()
+        self.assertEqual(self.investment.primary_capital, Decimal('500.00'))
+        self.assertEqual(Investment.objects.get(user=self.buyer).primary_capital, Decimal('500.00'))
+        self._assert_raised_equals_primary_capital()
+
+    def test_deleting_bought_in_investment_removes_only_its_share(self):
+        self._sell('750')
+        Investment.objects.get(user=self.buyer).delete()
+        self.opp.refresh_from_db()
+        self.assertEqual(self.opp.current_raised_amount, Decimal('500.00'))
+        self._assert_raised_equals_primary_capital()
+
+    def test_deleting_primary_investment_removes_its_capital(self):
+        self.investment.delete()
+        self.opp.refresh_from_db()
+        self.assertEqual(self.opp.current_raised_amount, Decimal('0.00'))
+        self.assertEqual(self.opp.investors_count, 0)
+
+    def test_admin_capital_adjustment_moves_raised_amount(self):
+        self.investment.refresh_from_db()
+        self.investment.total_invested = Decimal('1200')
+        self.investment.save()
+        self.opp.refresh_from_db()
+        self.assertEqual(self.opp.current_raised_amount, Decimal('1200.00'))
+
+
+class DjangoAdminDryRunFormTests(TestCase):
+    def test_failed_transfer_completion_is_a_form_error(self):
+        from django.contrib import admin
+        seller = _user('dj_seller')
+        investment = Investment.objects.create(
+            user=seller, name='A', total_invested=Decimal('1000'),
+            current_value=Decimal('1000'), investment_date=timezone.now().date(),
+        )
+        transfer = OwnershipTransfer.objects.create(
+            investment=investment, from_user=seller, transfer_type='PARTIAL', percentage=10,
+            transfer_amount=Decimal('100'), reason='x', status='APPROVED',  # no to_user
+        )
+        from django.forms import modelform_factory
+        model_admin = admin.site._registry[OwnershipTransfer]
+        fields = ['investment', 'from_user', 'to_email', 'to_name', 'transfer_type',
+                  'percentage', 'transfer_amount', 'reason', 'status']
+        form_cls = modelform_factory(OwnershipTransfer, form=model_admin.form, fields=fields)
+        data = {field: getattr(transfer, field) for field in
+                ('transfer_type', 'percentage', 'transfer_amount', 'reason', 'to_email', 'to_name')}
+        data.update(investment=investment.pk, from_user=seller.pk, status='COMPLETED')
+        form = form_cls(data=data, instance=transfer)
+        self.assertFalse(form.is_valid())
+        self.assertIn('no registered recipient', str(form.errors))
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'APPROVED')
+        investment.refresh_from_db()
+        self.assertEqual(investment.current_value, Decimal('1000.00'))
+
+
+class InvestorsCountTests(TestCase):
+    def test_count_follows_status_changes(self):
+        user = _user('count_user')
+        opp = _opportunity()
+        investment = Investment.objects.create(user=user, opportunity=opp, total_invested=Decimal('100'),
+                                               current_value=Decimal('100'), investment_date=timezone.now().date())
+        opp.refresh_from_db()
+        self.assertEqual(opp.investors_count, 1)
+        investment.status = 'EXITED'
+        investment.save()
+        opp.refresh_from_db()
+        self.assertEqual(opp.investors_count, 0)
+        investment.status = 'ACTIVE'
+        investment.save()
+        opp.refresh_from_db()
+        self.assertEqual(opp.investors_count, 1)
+
+
+class UserListQueryCountTests(APITestCase):
+    """Investor-facing list endpoints must not run a query per row."""
+
+    def setUp(self):
+        self.viewer = _user('qc_viewer')
+        self.client.force_authenticate(self.viewer)
+        self.opp = _opportunity(target_raise_amount=Decimal('10000000'))
+        self.n = 0
+
+    def _add_rows(self, count):
+        from marketplace.models import InvestorInterest
+        for _ in range(count):
+            self.n += 1
+            seller = _user(f'qc_seller_{self.n}')
+            inv = Investment.objects.create(user=seller, opportunity=self.opp, total_invested=Decimal('1000'),
+                                            current_value=Decimal('1000'), investment_date=timezone.now().date())
+            listing = OwnershipTransfer.objects.create(
+                investment=inv, from_user=seller, transfer_type='PARTIAL', percentage=10,
+                transfer_amount=Decimal('100'), reason='x', status='PENDING',
+            )
+            SecondaryMarketInterest.objects.create(transfer=listing, buyer=self.viewer, amount=Decimal('50'))
+            own = Investment.objects.create(user=self.viewer, name=f'Own {self.n}', total_invested=Decimal('10'),
+                                            current_value=Decimal('10'), investment_date=timezone.now().date())
+            CapitalActivity.objects.create(investment=own, activity_type='DISTRIBUTION',
+                                           amount=Decimal('1'), date=timezone.now().date())
+            OwnershipTransfer.objects.create(
+                investment=own, from_user=self.viewer, to_user=seller, transfer_type='PARTIAL',
+                percentage=10, transfer_amount=Decimal('1'), reason='x', status='DRAFT',
+            )
+            InvestorInterest.objects.create(user=self.viewer, opportunity=self.opp,
+                                            amount=Decimal('500'), investment_date=timezone.now().date())
+
+    def _queries_for(self, url):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+        return len(ctx.captured_queries)
+
+    def test_list_endpoints_scale_flat(self):
+        urls = [
+            '/api/investments/', '/api/capital-activities/', '/api/transfers/', '/api/transfers/pending/',
+            '/api/secondary-market/', '/api/secondary-market-interests/', '/api/marketplace/investor-interest/',
+            '/api/marketplace/opportunities/', '/api/accounts/network/directory/', '/api/portfolio/overview/',
+            '/api/portfolio/risk_metrics/', '/api/portfolio/performance_analysis/',
+        ]
+        self._add_rows(2)
+        before = {url: self._queries_for(url) for url in urls}
+        self._add_rows(4)
+        after = {url: self._queries_for(url) for url in urls}
+        self.assertEqual(before, after)

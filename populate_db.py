@@ -13,8 +13,7 @@ from accounts.models import InvestorProfile, InvestorConnection
 from investments.models import Investment, CapitalActivity, OwnershipTransfer
 from marketplace.models import MarketplaceOpportunity, InvestmentInterest
 from decimal import Decimal
-from datetime import date, timedelta
-from django.utils import timezone
+from datetime import date
 
 User = get_user_model()
 
@@ -31,7 +30,7 @@ investor1 = User.objects.create_user(
     last_name='Investor',
     phone_number='+1234567890',
     country='United States',
-    investor_type='INDIVIDUAL',
+    investor_type='RETAIL',
     risk_tolerance='MODERATE',
     is_email_verified=True
 )

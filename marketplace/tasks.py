@@ -12,6 +12,8 @@ def run_transition_opportunities():
     logger.info("Starting scheduled task: transition_opportunities")
     try:
         call_command('transition_opportunities')
-        logger.info("Successfully completed scheduled task: transition_opportunities")
-    except Exception as e:
-        logger.error(f"Failed to run transition_opportunities: {str(e)}")
+    except Exception:
+        # Log and re-raise so RQ records the job as failed instead of successful
+        logger.exception("Failed to run transition_opportunities")
+        raise
+    logger.info("Successfully completed scheduled task: transition_opportunities")

@@ -6,14 +6,19 @@ Handles user registration, authentication, email verification, and password rese
 from rest_framework import status, generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import authenticate
-from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
 
-from .models import User
+from django.contrib.auth.models import update_last_login
+from rest_framework_simplejwt.exceptions import InvalidToken
+from .authentication import SESSION_CLAIM
+from .models import UserActivity, UserSession
+from .session_utils import create_session, parse_device_name
 from .serializers import (
     UserRegistrationSerializer,
     EmailVerificationSerializer,
@@ -31,9 +36,21 @@ import logging
 logger = logging.getLogger('accounts')
 
 
-def get_tokens_for_user(user):
-    """Generate JWT tokens for a user."""
+def issue_tokens(user, request, ip_address):
+    """
+    Generate JWT tokens for a user and record the login as a UserSession keyed
+    by the refresh token's JTI (so the session can later be revoked).
+    """
     refresh = RefreshToken.for_user(user)
+    try:
+        session = create_session(user, request, refresh, ip_address)
+        # Copied into every access token minted from this refresh token
+        refresh[SESSION_CLAIM] = session.pk
+        logger.info(f"Session created for {user.email} from {ip_address}")
+    except Exception as e:
+        # Don't fail login if session bookkeeping fails
+        logger.error(f"Failed to create session for {user.email}: {str(e)}")
+    update_last_login(None, user)
     return {
         'refresh': str(refresh),
         'access': str(refresh.access_token),
@@ -44,9 +61,11 @@ def get_tokens_for_user(user):
 class UserRegistrationView(APIView):
     """
     API endpoint for user registration.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = UserRegistrationSerializer
 
     @extend_schema(
@@ -89,9 +108,11 @@ class UserRegistrationView(APIView):
 class EmailVerificationView(APIView):
     """
     API endpoint for email verification.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = EmailVerificationSerializer
 
     @extend_schema(
@@ -109,8 +130,7 @@ class EmailVerificationView(APIView):
             user = serializer.save()
             ip_address = get_client_ip(request)
             
-            # Generate tokens
-            tokens = get_tokens_for_user(user)
+            tokens = issue_tokens(user, request, ip_address)
             
             # Log verification event
             log_auth_event('email_verification', user.email, ip_address, success=True)
@@ -134,9 +154,11 @@ class EmailVerificationView(APIView):
 class ResendOTPView(APIView):
     """
     API endpoint for resending OTP.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = ResendOTPSerializer
 
     @extend_schema(
@@ -152,13 +174,13 @@ class ResendOTPView(APIView):
         
         if serializer.is_valid():
             user = serializer.save()
-            ip_address = get_client_ip(request)
+            otp_type = serializer.validated_data['otp_type']
+            log_auth_event(f'resend_otp_{otp_type}', serializer.validated_data['email'],
+                           get_client_ip(request), success=user is not None)
             
-            otp_type = request.data.get('otp_type')
-            log_auth_event(f'resend_otp_{otp_type}', user.email, ip_address, success=True)
-            
+            # Same response whether or not the account exists
             return Response({
-                'message': 'Verification code sent successfully.'
+                'message': 'If an account exists for this email, a new code has been sent.'
             }, status=status.HTTP_200_OK)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -168,9 +190,11 @@ class ResendOTPView(APIView):
 class LoginView(APIView):
     """
     API endpoint for user login.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = LoginSerializer
 
     @extend_schema(
@@ -193,38 +217,8 @@ class LoginView(APIView):
             user.last_login_ip = ip_address
             user.save(update_fields=['last_login_ip'])
             
-            # Generate tokens
-            tokens = get_tokens_for_user(user)
+            tokens = issue_tokens(user, request, ip_address)
             
-            # Create session record
-            from .models import UserSession
-            from .session_utils import parse_device_name, get_location_from_ip, cleanup_old_sessions
-            
-            try:
-                # Mark all existing sessions as not current
-                UserSession.objects.filter(user=user).update(is_current=False)
-                
-                # Create new session
-                UserSession.objects.create(
-                    user=user,
-                    device_name=parse_device_name(request.META.get('HTTP_USER_AGENT', '')),
-                    location=get_location_from_ip(ip_address),
-                    ip_address=ip_address,
-                    user_agent=request.META.get('HTTP_USER_AGENT', ''),
-                    is_current=True,
-                    session_key=tokens['access'][:100]  # Store truncated token reference
-                )
-                
-                # Clean up old sessions (keep last 10)
-                cleanup_old_sessions(user, max_sessions=10)
-                
-                logger.info(f"Session created for {user.email} from {ip_address}")
-            except Exception as e:
-                # Don't fail login if session creation fails
-                logger.error(f"Failed to create session for {user.email}: {str(e)}")
-            
-            # Log user activity
-            from .models import UserActivity
             UserActivity.log_activity(
                 user=user,
                 activity_type='LOGIN',
@@ -254,9 +248,11 @@ class LoginView(APIView):
 class PasswordResetRequestView(APIView):
     """
     API endpoint for requesting password reset.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = PasswordResetRequestSerializer
 
     @extend_schema(
@@ -272,10 +268,8 @@ class PasswordResetRequestView(APIView):
         
         if serializer.is_valid():
             serializer.save()
-            ip_address = get_client_ip(request)
-            email = request.data.get('email', 'unknown')
-            
-            log_auth_event('password_reset_request', email, ip_address, success=True)
+            log_auth_event('password_reset_request', serializer.validated_data['email'],
+                           get_client_ip(request), success=True)
             
             return Response({
                 'message': 'If this email exists, you will receive a password reset code.'
@@ -288,9 +282,11 @@ class PasswordResetRequestView(APIView):
 class PasswordResetVerifyView(APIView):
     """
     API endpoint for verifying password reset OTP.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = PasswordResetVerifySerializer
 
     @extend_schema(
@@ -321,9 +317,11 @@ class PasswordResetVerifyView(APIView):
 class PasswordResetConfirmView(APIView):
     """
     API endpoint for confirming password reset.
-    Note: Rate limiting should be implemented at the web server level (nginx/Apache) or using Redis in production.
+    Rate limited per client IP (the 'auth' throttle scope).
     """
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
     serializer_class = PasswordResetConfirmSerializer
 
     @extend_schema(
@@ -365,3 +363,32 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         response = super().update(request, *args, **kwargs)
         logger.info(f"Profile updated for user: {request.user.email}")
         return response
+
+
+class SessionTokenRefreshSerializer(TokenRefreshSerializer):
+    """
+    Token refresh that keeps UserSession in step with refresh-token rotation:
+    the session's key moves from the old token's JTI to the new one, so a
+    revoked session cannot be resurrected with a rotated token.
+    """
+
+    def validate(self, attrs):
+        from django.utils import timezone
+
+        old_token = self.token_class(attrs['refresh'])
+        session_id = old_token.get(SESSION_CLAIM)
+        if session_id is not None and not UserSession.objects.filter(pk=session_id).exists():
+            raise InvalidToken({'detail': 'This session has been signed out.', 'code': 'session_revoked'})
+        old_jti = str(old_token['jti'])
+        data = super().validate(attrs)
+        new_jti = str(self.token_class(data['refresh'])['jti']) if 'refresh' in data else old_jti
+        UserSession.objects.filter(session_key=old_jti).update(
+            session_key=new_jti, last_activity=timezone.now()
+        )
+        return data
+
+
+@method_decorator(never_cache, name='dispatch')
+class SessionTokenRefreshView(TokenRefreshView):
+    """Refresh an access token (and rotate the refresh token)."""
+    serializer_class = SessionTokenRefreshSerializer

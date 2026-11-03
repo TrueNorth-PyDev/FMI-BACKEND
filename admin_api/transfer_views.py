@@ -4,7 +4,9 @@ Admin Ownership Transfer & Secondary Market Interest management views.
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.viewsets import ReadOnlyModelViewSet, ModelViewSet
+from rest_framework.viewsets import ReadOnlyModelViewSet
+from django.db import transaction
+from django.utils import timezone
 
 from admin_api.permissions import IsAdminUser
 from admin_api.serializers import (
@@ -23,7 +25,7 @@ class AdminTransferViewSet(ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = OwnershipTransfer.objects.select_related(
-            'investment', 'from_user', 'to_user'
+            'investment', 'investment__opportunity', 'from_user', 'to_user'
         ).order_by('-created_at')
         t_status = self.request.query_params.get('status')
         if t_status:
@@ -54,7 +56,7 @@ class AdminTransferViewSet(ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         transfer.status = 'APPROVED'
-        transfer.save(update_fields=['status'])
+        transfer.save(update_fields=['status', 'updated_at'])
         return Response({'detail': 'Transfer approved.', 'status': transfer.status})
 
     # ---- Action: complete ----
@@ -66,29 +68,41 @@ class AdminTransferViewSet(ReadOnlyModelViewSet):
                 {'detail': f'Cannot complete a transfer with status "{transfer.status}". Expected APPROVED.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        transfer.status = 'COMPLETED'
-        transfer.save()  # triggers handle_transfer_completion signal
+        # The handle_transfer_completion signal moves the position; if that fails
+        # (e.g. no registered recipient) the ValidationError rolls this back and
+        # is returned as a 400.
+        with transaction.atomic():
+            transfer.status = 'COMPLETED'
+            transfer.save(update_fields=['status', 'updated_at'])
         return Response({'detail': 'Transfer completed.', 'status': transfer.status})
 
     # ---- Action: reject ----
     @action(detail=True, methods=['post'], url_path='reject')
     def reject(self, request, pk=None):
         transfer = self.get_object()
-        if transfer.status in ('COMPLETED', 'REJECTED'):
+        if transfer.status not in ('PENDING', 'APPROVED'):
             return Response(
                 {'detail': f'Cannot reject a transfer with status "{transfer.status}".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         reason = request.data.get('reason', '')
-        transfer.status = 'REJECTED'
-        transfer.reason = reason or transfer.reason
-        transfer.save(update_fields=['status', 'reason'])
+        with transaction.atomic():
+            transfer.status = 'REJECTED'
+            transfer.reason = reason or transfer.reason
+            transfer.save(update_fields=['status', 'reason', 'updated_at'])
+            # A rejected listing can no longer be bought
+            SecondaryMarketInterest.objects.filter(transfer=transfer, status='PENDING').update(
+                status='CANCELLED', updated_at=timezone.now()
+            )
         return Response({'detail': 'Transfer rejected.', 'status': transfer.status})
 
 
 class AdminSecondaryInterestViewSet(ReadOnlyModelViewSet):
     """
     Admin read + status update for secondary market buyer interests.
+
+    PATCH {"status": "CONVERTED"} executes the purchase (seller → buyer);
+    PATCH {"status": "CANCELLED"} declines it. Only PENDING interests can change.
     """
     permission_classes = [IsAdminUser]
     serializer_class = AdminSecondaryInterestSerializer
@@ -96,7 +110,7 @@ class AdminSecondaryInterestViewSet(ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = SecondaryMarketInterest.objects.select_related(
-            'transfer', 'buyer', 'transfer__investment'
+            'transfer', 'buyer', 'transfer__investment', 'transfer__investment__opportunity'
         ).order_by('-created_at')
         s = self.request.query_params.get('status')
         if s:
@@ -108,14 +122,21 @@ class AdminSecondaryInterestViewSet(ReadOnlyModelViewSet):
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
-        allowed_statuses = ['PENDING', 'CONVERTED', 'CANCELLED']
+        allowed_statuses = ['CONVERTED', 'CANCELLED']
         new_status = request.data.get('status')
-        if new_status and new_status not in allowed_statuses:
+        if new_status not in allowed_statuses:
             return Response(
                 {'detail': f'Invalid status. Choices: {allowed_statuses}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+        if instance.status != 'PENDING':
+            return Response(
+                {'detail': f'Only pending interests can be updated (this one is {instance.status}).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # CONVERTED triggers the purchase via signal; a failure rolls back the status
+        with transaction.atomic():
+            instance.status = new_status
+            instance.save(update_fields=['status', 'updated_at'])
+        instance.refresh_from_db()
+        return Response(self.get_serializer(instance).data)

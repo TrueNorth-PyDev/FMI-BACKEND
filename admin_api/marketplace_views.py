@@ -17,7 +17,6 @@ from admin_api.serializers import (
     AdminInvestorInterestSerializer,
 )
 from marketplace.models import MarketplaceOpportunity, OpportunityDocument, InvestorInterest
-from investments.models import Investment
 
 
 class AdminOpportunityViewSet(ModelViewSet):
@@ -112,9 +111,8 @@ class AdminOpportunityViewSet(ModelViewSet):
     @action(detail=True, methods=['post'], url_path='documents')
     def upload_document(self, request, pk=None):
         opp = self.get_object()
-        data = request.data.copy()
-        data['opportunity'] = opp.pk
-        serializer = AdminOpportunityDocumentSerializer(data=data)
+        # No request.data.copy(): it deep-copies uploads and fails for large files
+        serializer = AdminOpportunityDocumentSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(opportunity=opp)
             return Response(serializer.data, status=status.HTTP_201_CREATED)

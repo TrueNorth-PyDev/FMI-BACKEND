@@ -1,4 +1,5 @@
 from django.contrib import admin
+from core.admin_forms import DryRunSaveForm
 from .models import MarketplaceOpportunity, OpportunityDocument, OpportunityTag, InvestmentInterest, InvestorInterest
 
 
@@ -101,6 +102,7 @@ class InvestmentInterestAdmin(admin.ModelAdmin):
 @admin.register(InvestorInterest)
 class InvestorInterestAdmin(admin.ModelAdmin):
     """Admin interface for InvestorInterest model."""
+    form = DryRunSaveForm
     list_display = ['user', 'opportunity', 'amount', 'investment_date', 'status', 'created_at']
     list_filter = ['status', 'created_at', 'investment_date']
     search_fields = ['user__email', 'opportunity__title']

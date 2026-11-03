@@ -102,19 +102,27 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+# Every request runs in a transaction, so a failed financial operation (raised
+# from a signal or service) also rolls back the status change that triggered it.
+DATABASES['default']['ATOMIC_REQUESTS'] = True
 
 
-# Cache Configuration (for rate limiting)
-# Using dummy cache for development. For production, use Redis or Memcached.
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+# Cache Configuration (used by DRF throttling). Redis is shared across gunicorn
+# workers, so limits hold platform-wide; local memory is per-process (dev/tests).
+if env('REDIS_URL', default=''):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': env('REDIS_URL'),
+        }
     }
-}
-
-# Disable rate limiting checks in development
-RATELIMIT_ENABLE = not DEBUG
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
+        }
+    }
 
 
 # Custom User Model
@@ -164,17 +172,16 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # WhiteNoise configuration for efficient static file serving
 # Using CompressedStaticFilesStorage instead of CompressedManifestStaticFilesStorage
 # to avoid errors when manifest is missing
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 # Media files configuration
 MEDIA_URL = '/media/'
 
-# Use Railway volume mount in production, local directory in development
-if DEBUG:
-    MEDIA_ROOT = BASE_DIR / 'media'
-else:
-    # Railway volume is mounted to /app/media
-    MEDIA_ROOT = '/app/media'
+# Use Railway volume mount in production (/app/media), local directory in development
+MEDIA_ROOT = env('MEDIA_ROOT', default=str(BASE_DIR / 'media') if DEBUG else '/app/media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -185,7 +192,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'accounts.authentication.SessionJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -201,6 +208,14 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
     ),
     'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
+    # Number of trusted reverse proxies in front of the app. Client IPs (for
+    # throttling and logs) are read from the X-Forwarded-For entry appended by
+    # the outermost trusted proxy, so clients can't spoof them.
+    'NUM_PROXIES': env.int('NUM_PROXIES', default=0 if DEBUG else 1) or None,
+    # Applied to views that set throttle_scope (login, registration, OTP endpoints)
+    'DEFAULT_THROTTLE_RATES': {
+        'auth': env('AUTH_THROTTLE_RATE', default='30/minute'),
+    },
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
@@ -231,6 +246,9 @@ SIMPLE_JWT = {
 }
 
 
+# Upload size limits (per-file limits are enforced by the upload endpoints)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024  # larger uploads stream to a temp file
+
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
     'http://localhost:3000',
@@ -243,8 +261,11 @@ CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
 CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 # In production, automatically add ALLOWED_HOSTS to CSRF_TRUSTED_ORIGINS
 if not DEBUG:
-    # Add https:// prefix to all allowed hosts for CSRF
-    CSRF_TRUSTED_ORIGINS.extend([f'https://{host}' for host in ALLOWED_HOSTS if host not in ['localhost', '127.0.0.1']])
+    # Add https:// prefix to all allowed hosts for CSRF (".example.com" → "https://*.example.com")
+    CSRF_TRUSTED_ORIGINS.extend([
+        f"https://*{host}" if host.startswith('.') else f"https://{host}"
+        for host in ALLOWED_HOSTS if host not in ['localhost', '127.0.0.1', '*']
+    ])
     # Also add CORS origins
     CSRF_TRUSTED_ORIGINS.extend(CORS_ALLOWED_ORIGINS)
 CORS_ALLOW_CREDENTIALS = True
@@ -269,16 +290,23 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='PrivCap Hub <noreply@privcaphub.com>')
+EMAIL_TIMEOUT = env.int('EMAIL_TIMEOUT', default=10)  # seconds; never hang a request on SMTP
 
 
 # Security Settings
+# Railway (and most PaaS) terminate TLS at a proxy that sets X-Forwarded-Proto.
+# Trusting it makes request.is_secure() correct, so absolute URLs use https and
+# SECURE_SSL_REDIRECT doesn't loop.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=False)
-SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=False)
-CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=False)
+# Railway's health check calls the container over plain HTTP
+SECURE_REDIRECT_EXEMPT = [r'^api/health/$']
+SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=not DEBUG)
+CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=not DEBUG)
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
-SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 
@@ -459,8 +487,6 @@ SPECTACULAR_SETTINGS = {
     },
 }
 
-
-OTP_EXPIRY_MINUTES = 10
 
 # Django RQ Configuration
 RQ_QUEUES = {

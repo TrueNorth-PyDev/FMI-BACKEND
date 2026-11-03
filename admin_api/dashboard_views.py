@@ -2,11 +2,12 @@
 Admin Dashboard view — single-call platform KPIs.
 """
 from rest_framework.views import APIView
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
-from datetime import timedelta
 
 from admin_api.permissions import IsAdminUser
 from investments.models import Investment, OwnershipTransfer
@@ -19,61 +20,49 @@ User = get_user_model()
 class AdminDashboardView(APIView):
     permission_classes = [IsAdminUser]
 
+    @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         now = timezone.now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        # --- Users ---
-        users_qs = User.objects.all()
-        users_stats = {
-            "total": users_qs.count(),
-            "verified_email": users_qs.filter(is_email_verified=True).count(),
-            "verified_investor": users_qs.filter(is_verified=True).count(),
-            "active": users_qs.filter(is_active=True).count(),
-            "locked": users_qs.filter(
-                account_locked_until__gt=now
-            ).count(),
-            "new_this_month": users_qs.filter(created_at__gte=month_start).count(),
-        }
-
-        # --- Investments ---
-        inv_qs = Investment.objects.all()
-        inv_agg = inv_qs.aggregate(
-            total_invested=Sum('total_invested'),
-            total_value=Sum('current_value'),
+        # One aggregate query per table instead of a COUNT per figure
+        users_stats = User.objects.aggregate(
+            total=Count('id'),
+            verified_email=Count('id', filter=Q(is_email_verified=True)),
+            verified_investor=Count('id', filter=Q(is_verified=True)),
+            active=Count('id', filter=Q(is_active=True)),
+            locked=Count('id', filter=Q(account_locked_until__gt=now)),
+            new_this_month=Count('id', filter=Q(created_at__gte=month_start)),
         )
-        investments_stats = {
-            "total_count": inv_qs.count(),
-            "active": inv_qs.filter(status='ACTIVE').count(),
-            "exited": inv_qs.filter(status='EXITED').count(),
-            "total_invested": inv_agg['total_invested'] or 0,
-            "total_current_value": inv_agg['total_value'] or 0,
-        }
 
-        # --- Opportunities ---
-        opp_qs = MarketplaceOpportunity.objects.all()
-        opp_agg = opp_qs.aggregate(total_raised=Sum('current_raised_amount'))
-        opportunities_stats = {
-            "total": opp_qs.count(),
-            "active": opp_qs.filter(status='ACTIVE').count(),
-            "new": opp_qs.filter(status='NEW').count(),
-            "closing_soon": opp_qs.filter(status='CLOSING_SOON').count(),
-            "closed": opp_qs.filter(status='CLOSED').count(),
-            "featured": opp_qs.filter(is_featured=True).count(),
-            "total_raised": opp_agg['total_raised'] or 0,
-        }
+        investments_stats = Investment.objects.aggregate(
+            total_count=Count('id'),
+            active=Count('id', filter=Q(status='ACTIVE')),
+            exited=Count('id', filter=Q(status='EXITED')),
+            total_invested=Sum('total_invested'),
+            total_current_value=Sum('current_value'),
+        )
+        investments_stats['total_invested'] = investments_stats['total_invested'] or 0
+        investments_stats['total_current_value'] = investments_stats['total_current_value'] or 0
 
-        # --- Transfers ---
-        transfer_qs = OwnershipTransfer.objects.all()
-        transfers_stats = {
-            "total": transfer_qs.count(),
-            "pending": transfer_qs.filter(status='PENDING').count(),
-            "approved": transfer_qs.filter(status='APPROVED').count(),
-            "completed": transfer_qs.filter(status='COMPLETED').count(),
-            "completed_this_month": transfer_qs.filter(
-                status='COMPLETED', updated_at__gte=month_start
-            ).count(),
-        }
+        opportunities_stats = MarketplaceOpportunity.objects.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status='ACTIVE')),
+            new=Count('id', filter=Q(status='NEW')),
+            closing_soon=Count('id', filter=Q(status='CLOSING_SOON')),
+            closed=Count('id', filter=Q(status='CLOSED')),
+            featured=Count('id', filter=Q(is_featured=True)),
+            total_raised=Sum('current_raised_amount'),
+        )
+        opportunities_stats['total_raised'] = opportunities_stats['total_raised'] or 0
+
+        transfers_stats = OwnershipTransfer.objects.aggregate(
+            total=Count('id'),
+            pending=Count('id', filter=Q(status='PENDING')),
+            approved=Count('id', filter=Q(status='APPROVED')),
+            completed=Count('id', filter=Q(status='COMPLETED')),
+            completed_this_month=Count('id', filter=Q(status='COMPLETED', completion_date__gte=month_start)),
+        )
 
         # --- Recent Platform Activity ---
         recent_activity = list(

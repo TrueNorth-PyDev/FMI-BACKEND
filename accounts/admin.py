@@ -1,11 +1,28 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from .models import User, OTP, UserNotificationPreference, UserDocument, UserActivity, UserSession, InvestorProfile, InvestorConnection
+
+
+class AdminUserCreationForm(UserCreationForm):
+    """Django's stock form targets auth.User/username; this one targets the email-based user."""
+
+    class Meta:
+        model = User
+        fields = ('email', 'first_name', 'last_name')
+
+
+class AdminUserChangeForm(UserChangeForm):
+    class Meta:
+        model = User
+        fields = '__all__'
 
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     """Custom admin for User model."""
+    form = AdminUserChangeForm
+    add_form = AdminUserCreationForm
     list_display = ['email', 'first_name', 'last_name', 'is_verified', 'is_email_verified', 'is_active', 'created_at']
     list_filter = ['is_verified', 'is_email_verified', 'is_active', 'is_staff', 'investor_type', 'created_at']
     search_fields = ['email', 'first_name', 'last_name', 'username', 'phone_number']

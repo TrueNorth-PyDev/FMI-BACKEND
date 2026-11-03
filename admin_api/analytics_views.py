@@ -2,16 +2,18 @@
 Admin Analytics views — growth charts, AUM, funding funnels, transfer volume.
 """
 from rest_framework.views import APIView
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
-from django.db.models.functions import TruncMonth, TruncWeek
+from django.db.models.functions import TruncMonth
 from datetime import timedelta
 
 from admin_api.permissions import IsAdminUser
 from investments.models import Investment, OwnershipTransfer
-from marketplace.models import MarketplaceOpportunity, InvestorInterest
+from marketplace.models import MarketplaceOpportunity
 
 User = get_user_model()
 
@@ -20,6 +22,7 @@ class AdminUserAnalyticsView(APIView):
     """User growth and investor type breakdown."""
     permission_classes = [IsAdminUser]
 
+    @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         # Growth: new users per month for the last 12 months
         twelve_months_ago = timezone.now() - timedelta(days=365)
@@ -40,11 +43,11 @@ class AdminUserAnalyticsView(APIView):
         )
 
         # Verification breakdown
-        verification = {
-            'email_verified': User.objects.filter(is_email_verified=True).count(),
-            'email_unverified': User.objects.filter(is_email_verified=False).count(),
-            'investor_verified': User.objects.filter(is_verified=True).count(),
-        }
+        verification = User.objects.aggregate(
+            email_verified=Count('id', filter=Q(is_email_verified=True)),
+            email_unverified=Count('id', filter=Q(is_email_verified=False)),
+            investor_verified=Count('id', filter=Q(is_verified=True)),
+        )
 
         return Response({
             'growth_by_month': growth,
@@ -57,10 +60,11 @@ class AdminAUMAnalyticsView(APIView):
     """AUM over time and per sector."""
     permission_classes = [IsAdminUser]
 
+    @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         # Total AUM per sector
         aum_by_sector = list(
-            Investment.objects.filter(status='ACTIVE')
+            Investment.objects.filter(status__in=['ACTIVE', 'UNDERPERFORMING'])
             .values('sector')
             .annotate(
                 total_invested=Sum('total_invested'),
@@ -100,6 +104,7 @@ class AdminOpportunityAnalyticsView(APIView):
     """Funding funnel stats per opportunity."""
     permission_classes = [IsAdminUser]
 
+    @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         opps = MarketplaceOpportunity.objects.annotate(
             interest_count=Count('investor_interest_pledges'),
@@ -135,6 +140,7 @@ class AdminTransferAnalyticsView(APIView):
     """Transfer volume and value over time."""
     permission_classes = [IsAdminUser]
 
+    @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         twelve_months_ago = timezone.now() - timedelta(days=365)
 

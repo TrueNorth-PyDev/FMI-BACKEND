@@ -1,10 +1,38 @@
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager as BaseUserManager
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 import logging
 
 logger = logging.getLogger('accounts')
+
+
+class UserManager(BaseUserManager):
+    """Manager for an email-authenticated user; username is optional and auto-generated."""
+
+    def _create_user(self, username, email, password, **extra_fields):
+        if not email:
+            raise ValueError("The given email must be set")
+        email = self.normalize_email(email).lower()
+        user = self.model(username=username or None, email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_user(self, email=None, password=None, username=None, **extra_fields):
+        extra_fields.setdefault('is_staff', False)
+        extra_fields.setdefault('is_superuser', False)
+        return self._create_user(username, email, password, **extra_fields)
+
+    def create_superuser(self, email=None, password=None, username=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('is_email_verified', True)
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError("Superuser must have is_staff=True.")
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError("Superuser must have is_superuser=True.")
+        return self._create_user(username, email, password, **extra_fields)
 
 
 class User(AbstractUser):
@@ -58,6 +86,8 @@ class User(AbstractUser):
     # Use email as the primary authentication field
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
+
+    objects = UserManager()
     
     class Meta:
         db_table = 'users'
@@ -133,6 +163,7 @@ class OTP(models.Model):
     otp_code = models.CharField(max_length=6)
     otp_type = models.CharField(max_length=20, choices=OTP_TYPE_CHOICES)
     is_used = models.BooleanField(default=False)
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -149,15 +180,40 @@ class OTP(models.Model):
     def __str__(self):
         return f"{self.otp_type} OTP for {self.user.email}"
     
+    MAX_FAILED_ATTEMPTS = 5
+
     def is_valid(self):
         """Check if OTP is still valid (not used and not expired)."""
         return not self.is_used and timezone.now() < self.expires_at
+
+    @classmethod
+    def verify(cls, user, otp_type, otp_code):
+        """
+        Check a submitted code against the user's latest unused OTP of this type.
+
+        Returns (otp, error). Wrong guesses are counted and the OTP is burned
+        after MAX_FAILED_ATTEMPTS, so a 6-digit code cannot be brute-forced.
+        """
+        import hmac
+
+        otp = cls.objects.filter(user=user, otp_type=otp_type, is_used=False).order_by('-created_at').first()
+        if otp is None:
+            return None, 'invalid'
+        if timezone.now() >= otp.expires_at:
+            return None, 'expired'
+        if not hmac.compare_digest(otp.otp_code, str(otp_code)):
+            otp.failed_attempts += 1
+            if otp.failed_attempts >= cls.MAX_FAILED_ATTEMPTS:
+                otp.is_used = True
+            otp.save(update_fields=['failed_attempts', 'is_used'])
+            return None, 'invalid'
+        return otp, None
     
     def mark_as_used(self):
         """Mark OTP as used."""
         self.is_used = True
         self.save(update_fields=['is_used'])
-        logger.info(f"OTP {self.otp_code} marked as used for {self.user.email}")
+        logger.info(f"{self.otp_type} OTP marked as used for {self.user.email}")
     
     @classmethod
     def create_otp(cls, user, otp_type):
@@ -166,7 +222,7 @@ class OTP(models.Model):
         Invalidates any existing unused OTPs of the same type.
         """
         from django.conf import settings
-        import random
+        import secrets
         
         # Invalidate existing unused OTPs of the same type
         cls.objects.filter(
@@ -176,7 +232,7 @@ class OTP(models.Model):
         ).update(is_used=True)
         
         # Generate OTP code
-        otp_code = ''.join([str(random.randint(0, 9)) for _ in range(settings.OTP_LENGTH)])
+        otp_code = ''.join(secrets.choice('0123456789') for _ in range(settings.OTP_LENGTH))
         
         # Create new OTP
         otp = cls.objects.create(
@@ -321,7 +377,7 @@ class UserSession(models.Model):
     ip_address = models.GenericIPAddressField()
     user_agent = models.TextField(blank=True)
     is_current = models.BooleanField(default=False)
-    session_key = models.CharField(max_length=255, unique=True)
+    session_key = models.CharField(max_length=255, unique=True, help_text="JTI of the session's current refresh token")
     created_at = models.DateTimeField(auto_now_add=True)
     last_activity = models.DateTimeField(auto_now=True)
     

@@ -25,16 +25,15 @@ class Command(BaseCommand):
             created_at__lte=threshold_date
         )
         
-        count = new_opps.count()
-        if count == 0:
+        titles = list(new_opps.values_list('title', flat=True))
+        if not titles:
             self.stdout.write("No opportunities found for transition.")
             return
 
-        # Perform the transition
-        for opp in new_opps:
-            opp.status = 'ACTIVE'
-            opp.save(update_fields=['status'])
-            self.stdout.write(self.style.SUCCESS(f"Transitioned '{opp.title}' to ACTIVE."))
-            logger.info(f"Opportunity {opp.title} transitioned from NEW to ACTIVE (Time-based)")
+        # Single UPDATE instead of one save() per opportunity
+        count = new_opps.update(status='ACTIVE', updated_at=timezone.now())
+        for title in titles:
+            self.stdout.write(self.style.SUCCESS(f"Transitioned '{title}' to ACTIVE."))
+            logger.info(f"Opportunity {title} transitioned from NEW to ACTIVE (Time-based)")
             
         self.stdout.write(self.style.SUCCESS(f"Successfully transitioned {count} opportunities."))

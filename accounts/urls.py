@@ -4,7 +4,6 @@ URL configuration for the accounts app.
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     UserRegistrationView,
     EmailVerificationView,
@@ -14,6 +13,7 @@ from .views import (
     PasswordResetVerifyView,
     PasswordResetConfirmView,
     UserProfileView,
+    SessionTokenRefreshView,
 )
 from .account_views import AccountManagementViewSet
 from .network_views import InvestorNetworkViewSet
@@ -33,7 +33,7 @@ urlpatterns = [
     path('login/', LoginView.as_view(), name='login'),
     
     # JWT token endpoints
-    path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('token/refresh/', SessionTokenRefreshView.as_view(), name='token-refresh'),
     
     # Password reset endpoints
     path('password-reset/request/', PasswordResetRequestView.as_view(), name='password-reset-request'),
