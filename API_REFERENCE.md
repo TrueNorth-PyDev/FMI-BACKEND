@@ -157,6 +157,35 @@ A transfer needs a registered recipient (`to_user`) to be completed; otherwise c
 | DELETE | `opportunities/{id}/remove_bookmark/` | Remove from watchlist (works for closed opportunities too) |
 | GET | `watchlist/` | Your watchlist |
 
+### List query parameters — `GET /api/marketplace/opportunities/`
+
+| Param | Example | Behaviour |
+|-------|---------|-----------|
+| `search` | `?search=helix` | Text match on title, description, sector and investment type (codes or display labels, e.g. `health`) |
+| `sector` | `?sector=HEALTHCARE&sector=TECHNOLOGY` | Sector code(s); matches any |
+| `risk_level` | `?risk_level=MEDIUM,HIGH` | `LOW` \| `MEDIUM` \| `HIGH`; matches any |
+| `investment_type` | `?investment_type=FIXED` | `FIXED` \| `VARIABLE`; matches any |
+| `status` | `?status=CLOSING_SOON` | `NEW` \| `ACTIVE` \| `CLOSING_SOON`; matches any |
+| `max_min_investment` | `?max_min_investment=2500` | Only opportunities whose `min_investment` ≤ this amount (`400` if not a number) |
+| `ordering` | `?ordering=-min_investment` | See below |
+| `page` | `?page=2` | Pagination (20 per page) |
+
+| `ordering` value | Order |
+|------------------|-------|
+| `featured` *(default)* | Featured first, then newest |
+| `closing` / `closing_soon` | `CLOSING_SOON` first, then most funded (opportunities have no closing date) |
+| `min_investment` | Lowest minimum ticket first |
+| `title` / `name` | A–Z by title (case-insensitive) |
+| `newest` | Most recently created first |
+
+### Query parameter conventions (marketplace and secondary market)
+- **Codes, not labels**: enum filters take stored codes (`HEALTHCARE`, `HIGH`, `FIXED`, `PARTIAL`); codes are case-insensitive. Display text stays in the `*_display` response fields.
+- **Multi-value**: repeat the parameter (`?sector=A&sector=B`), comma-separate it (`?sector=A,B`), or mix both.
+- **OR within a parameter, AND across parameters**: `?sector=A,B&risk_level=HIGH` → (sector A or B) and high risk.
+- **Missing, empty or unrecognised parameters** apply no filter. Unknown `ordering` values fall back to the default.
+- **Ordering**: prefix a value with `-` to reverse it (`?ordering=-min_investment`).
+- The response keeps the paginated shape (`count`, `next`, `previous`, `results`); `count` reflects the filtered set.
+
 ### Investor Interest (pledges)
 **Base URL**: `/api/marketplace/investor-interest/`
 
@@ -200,7 +229,27 @@ Read-only listing of `PENDING` ownership transfers that have no named recipient.
 | GET | `/{id}/` | Listing detail |
 | POST | `/{id}/express_interest/` | Register buyer interest (see below) |
 
-**Filters**: `sector`, `transfer_type` (`FULL`/`PARTIAL`), `min_amount`, `max_amount`
+### List query parameters — `GET /api/secondary-market/`
+
+Same conventions as the primary marketplace (codes, multi-value, OR within / AND across, `-` to reverse).
+
+| Param | Example | Behaviour |
+|-------|---------|-----------|
+| `search` | `?search=greenhaven` | Match the listing's opportunity title / investment name, or its sector (code or label) |
+| `sector` | `?sector=HEALTHCARE,TECHNOLOGY` | Sector code(s); matches any. Uses the opportunity's sector, or the investment's own sector when it isn't linked to an opportunity |
+| `transfer_type` | `?transfer_type=PARTIAL` | `FULL` \| `PARTIAL`; matches any |
+| `min_amount` / `max_amount` | `?min_amount=1000&max_amount=500000` | Range on `transfer_amount` (inclusive), in the same units and decimal format as `transfer_amount`; `400` if not a number |
+| `ordering` | `?ordering=asking` | See below |
+| `page` | `?page=1` | Pagination (20 per page) |
+
+| `ordering` value | Order |
+|------------------|-------|
+| `featured` / `newest` *(default)* | Most recently listed first |
+| `asking` | Highest `transfer_amount` first (`-asking` = lowest first) |
+| `transfer_amount` | Lowest `transfer_amount` first (`-transfer_amount` = highest first) |
+| `name` / `investment_name` | A–Z by opportunity title / investment name |
+
+Every listing has a `transfer_amount`; there are no "request a quote" listings.
 
 ### Buying — Interest, then Staff Approval
 

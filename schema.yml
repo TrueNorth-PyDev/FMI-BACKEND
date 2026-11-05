@@ -2866,12 +2866,51 @@ paths:
 
         Provides list and detail views with search and filtering.
       parameters:
+      - in: query
+        name: investment_type
+        schema:
+          type: string
+        description: FIXED | VARIABLE. Multi-value, matches any.
+      - in: query
+        name: max_min_investment
+        schema:
+          type: number
+          format: double
+        description: Only opportunities whose min_investment is <= this amount.
+      - in: query
+        name: ordering
+        schema:
+          type: string
+        description: featured (default) | closing | min_investment | title | newest.
+          Prefix with - to reverse.
       - name: page
         required: false
         in: query
         description: A page number within the paginated result set.
         schema:
           type: integer
+      - in: query
+        name: risk_level
+        schema:
+          type: string
+        description: LOW | MEDIUM | HIGH. Multi-value, matches any.
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Text match on title, description, sector and investment type
+          (codes or display labels).
+      - in: query
+        name: sector
+        schema:
+          type: string
+        description: Sector code(s), e.g. HEALTHCARE. Repeat the parameter or comma-separate
+          for several; matches any.
+      - in: query
+        name: status
+        schema:
+          type: string
+        description: NEW | ACTIVE | CLOSING_SOON. Multi-value, matches any.
       tags:
       - marketplace
       security:
@@ -3092,26 +3131,62 @@ paths:
     get:
       operationId: secondary_market_list
       description: |-
-        Read-only ViewSet exposing all PENDING ownership transfers as secondary-market listings.
+        Read-only ViewSet exposing PENDING ownership transfers without a named
+        recipient as secondary-market listings.
 
         Any authenticated user can browse investments that other users have put up for sale.
-        Filtering is supported via query params:
-          - sector       : e.g. TECHNOLOGY
+        Filtering is supported via query params (multi-value params accept repeated
+        keys or comma-separated codes; OR within a param, AND across params):
+          - search       : listing / investment name, sector code or label
+          - sector       : sector code(s), e.g. TECHNOLOGY
           - transfer_type: FULL | PARTIAL
-          - min_amount   : minimum transfer_amount
+          - min_amount   : minimum transfer_amount (same currency/decimal format as transfer_amount)
           - max_amount   : maximum transfer_amount
+          - ordering     : featured / newest (default) | asking | transfer_amount | name; prefix - to reverse
 
         Extra action:
           POST /secondary-market/{id}/express_interest/
-            Creates an InvestorInterest record against the underlying opportunity so the
-            seller/platform can follow up with interested buyers.
+            Registers the buyer's interest (SecondaryMarketInterest) for staff to review.
       parameters:
+      - in: query
+        name: max_amount
+        schema:
+          type: number
+          format: double
+        description: Maximum transfer_amount.
+      - in: query
+        name: min_amount
+        schema:
+          type: number
+          format: double
+        description: Minimum transfer_amount.
+      - in: query
+        name: ordering
+        schema:
+          type: string
+        description: featured / newest (default) | asking (highest first) | transfer_amount
+          (lowest first) | name. Prefix with - to reverse.
       - name: page
         required: false
         in: query
         description: A page number within the paginated result set.
         schema:
           type: integer
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Match listing / investment name and sector (code or label).
+      - in: query
+        name: sector
+        schema:
+          type: string
+        description: Sector code(s). Repeat or comma-separate; matches any.
+      - in: query
+        name: transfer_type
+        schema:
+          type: string
+        description: FULL | PARTIAL. Multi-value, matches any.
       tags:
       - secondary-market
       security:
@@ -3313,19 +3388,22 @@ paths:
     get:
       operationId: secondary_market_retrieve
       description: |-
-        Read-only ViewSet exposing all PENDING ownership transfers as secondary-market listings.
+        Read-only ViewSet exposing PENDING ownership transfers without a named
+        recipient as secondary-market listings.
 
         Any authenticated user can browse investments that other users have put up for sale.
-        Filtering is supported via query params:
-          - sector       : e.g. TECHNOLOGY
+        Filtering is supported via query params (multi-value params accept repeated
+        keys or comma-separated codes; OR within a param, AND across params):
+          - search       : listing / investment name, sector code or label
+          - sector       : sector code(s), e.g. TECHNOLOGY
           - transfer_type: FULL | PARTIAL
-          - min_amount   : minimum transfer_amount
+          - min_amount   : minimum transfer_amount (same currency/decimal format as transfer_amount)
           - max_amount   : maximum transfer_amount
+          - ordering     : featured / newest (default) | asking | transfer_amount | name; prefix - to reverse
 
         Extra action:
           POST /secondary-market/{id}/express_interest/
-            Creates an InvestorInterest record against the underlying opportunity so the
-            seller/platform can follow up with interested buyers.
+            Registers the buyer's interest (SecondaryMarketInterest) for staff to review.
       parameters:
       - in: path
         name: id

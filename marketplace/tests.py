@@ -380,3 +380,60 @@ class RemoveBookmarkClosedOpportunityTests(APITestCase):
         response = self.client.delete(reverse('marketplace:opportunity-remove-bookmark', args=[opp.id]))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(InvestmentInterest.objects.filter(user=user, opportunity=opp).exists())
+
+
+class OpportunityFilterTests(APITestCase):
+    """Server-side filters and ordering for GET /api/marketplace/opportunities/."""
+
+    def setUp(self):
+        self.url = reverse('marketplace:opportunity-list')
+        self.health = make_opportunity(title='Helix Health', sector='HEALTHCARE', risk_level='MEDIUM',
+                                       investment_type='FIXED', min_investment=Decimal('2000'))
+        self.tech = make_opportunity(title='alpha Tech', sector='TECHNOLOGY', risk_level='HIGH',
+                                     investment_type='VARIABLE', min_investment=Decimal('5000'))
+        self.farm = make_opportunity(title='Green Farm', sector='AGRICULTURE', risk_level='LOW',
+                                     investment_type='FIXED', min_investment=Decimal('1000'),
+                                     is_featured=True)
+        self.closing = make_opportunity(title='Zeta Energy', sector='ENERGY', risk_level='HIGH',
+                                        status='CLOSING_SOON', min_investment=Decimal('3000'),
+                                        current_raised_amount=Decimal('450000'))
+
+    def _titles(self, query=''):
+        response = self.client.get(self.url + query)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        return [row['title'] for row in response.data['results']], response.data['count']
+
+    def test_multi_sector_repeated_and_comma_separated(self):
+        repeated, count = self._titles('?sector=HEALTHCARE&sector=TECHNOLOGY')
+        self.assertCountEqual(repeated, ['Helix Health', 'alpha Tech'])
+        self.assertEqual(count, 2)
+        comma, _ = self._titles('?sector=healthcare,technology')
+        self.assertCountEqual(comma, repeated)
+
+    def test_risk_level_and_investment_type_are_anded(self):
+        titles, _ = self._titles('?risk_level=MEDIUM&risk_level=HIGH&investment_type=VARIABLE')
+        self.assertEqual(titles, ['alpha Tech'])
+
+    def test_max_min_investment(self):
+        titles, _ = self._titles('?max_min_investment=2500')
+        self.assertCountEqual(titles, ['Helix Health', 'Green Farm'])
+        response = self.client.get(self.url + '?max_min_investment=abc')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_empty_and_unknown_params_apply_no_filter(self):
+        _, count = self._titles('?sector=&risk_level=&max_min_investment=&color=blue')
+        self.assertEqual(count, 4)
+
+    def test_search_matches_sector_label(self):
+        titles, _ = self._titles('?search=agricul')
+        self.assertEqual(titles, ['Green Farm'])
+
+    def test_orderings(self):
+        self.assertEqual(self._titles()[0][0], 'Green Farm')  # featured first by default
+        self.assertEqual(self._titles('?ordering=closing')[0][0], 'Zeta Energy')
+        self.assertEqual(self._titles('?ordering=min_investment')[0],
+                         ['Green Farm', 'Helix Health', 'Zeta Energy', 'alpha Tech'])
+        self.assertEqual(self._titles('?ordering=-min_investment')[0][0], 'alpha Tech')
+        self.assertEqual(self._titles('?ordering=title')[0],
+                         ['alpha Tech', 'Green Farm', 'Helix Health', 'Zeta Energy'])
+        self.assertEqual(self._titles('?ordering=nonsense')[0][0], 'Green Farm')  # falls back to default

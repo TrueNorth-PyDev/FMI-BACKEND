@@ -1089,3 +1089,57 @@ class UserListQueryCountTests(APITestCase):
         self._add_rows(4)
         after = {url: self._queries_for(url) for url in urls}
         self.assertEqual(before, after)
+
+
+class SecondaryMarketFilterTests(APITestCase):
+    """Server-side filters and ordering for GET /api/secondary-market/."""
+
+    def setUp(self):
+        self.client.force_authenticate(_user('sm_browser'))
+        seller = _user('sm_seller')
+        health = _opportunity(title='Greenhaven Clinics', sector='HEALTHCARE')
+        tech = _opportunity(title='Byte Labs', sector='TECHNOLOGY')
+
+        def listing(investment, amount, transfer_type='PARTIAL'):
+            return OwnershipTransfer.objects.create(
+                investment=investment, from_user=seller, transfer_type=transfer_type,
+                percentage=10 if transfer_type == 'PARTIAL' else None,
+                transfer_amount=Decimal(amount), reason='x', status='PENDING',
+            )
+
+        def holding(**kwargs):
+            return Investment.objects.create(user=seller, total_invested=Decimal('100000'),
+                                             current_value=Decimal('100000'),
+                                             investment_date=timezone.now().date(), **kwargs)
+
+        listing(holding(opportunity=health), '5000')
+        listing(holding(opportunity=tech), '20000', 'FULL')
+        # Not linked to an opportunity: sector comes from the investment itself
+        listing(holding(name='Cassava Fund', sector='AGRICULTURE'), '1000')
+
+    def _names(self, query=''):
+        response = self.client.get('/api/secondary-market/' + query)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        return [row['investment_name'] for row in response.data['results']]
+
+    def test_search(self):
+        self.assertEqual(self._names('?search=greenhaven'), ['Greenhaven Clinics'])
+        self.assertEqual(self._names('?search=cassava'), ['Cassava Fund'])
+        self.assertEqual(self._names('?search=health'), ['Greenhaven Clinics'])
+
+    def test_multi_sector_includes_unlinked_investments(self):
+        self.assertCountEqual(self._names('?sector=HEALTHCARE,AGRICULTURE'),
+                              ['Greenhaven Clinics', 'Cassava Fund'])
+
+    def test_transfer_type_and_amount_range(self):
+        self.assertEqual(self._names('?transfer_type=FULL'), ['Byte Labs'])
+        self.assertCountEqual(self._names('?min_amount=1000&max_amount=5000'),
+                              ['Greenhaven Clinics', 'Cassava Fund'])
+        response = self.client.get('/api/secondary-market/?min_amount=lots')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_orderings(self):
+        self.assertEqual(self._names('?ordering=asking'), ['Byte Labs', 'Greenhaven Clinics', 'Cassava Fund'])
+        self.assertEqual(self._names('?ordering=-asking'), ['Cassava Fund', 'Greenhaven Clinics', 'Byte Labs'])
+        self.assertEqual(self._names('?ordering=name'), ['Byte Labs', 'Cassava Fund', 'Greenhaven Clinics'])
+        self.assertEqual(self._names('?ordering=newest')[0], 'Cassava Fund')

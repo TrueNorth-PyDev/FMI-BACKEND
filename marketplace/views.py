@@ -7,7 +7,13 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.db.models import Q
+from decimal import Decimal, InvalidOperation
+from django.db.models import Case, DecimalField, ExpressionWrapper, F, IntegerField, Q, Value, When
+from django.db.models.functions import Lower
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from rest_framework.exceptions import ValidationError
+
+from core.utils import query_list, resolve_ordering
 
 from .models import MarketplaceOpportunity, InvestmentInterest, InvestorInterest
 from .serializers import (
@@ -28,41 +34,89 @@ class MarketplaceOpportunityViewSet(viewsets.ReadOnlyModelViewSet):
     """
     permission_classes = [AllowAny]  # Public marketplace
     
+    # ?ordering= values (prefix '-' to reverse). There is no closing date on an
+    # opportunity, so "closing" means CLOSING_SOON first, then the most funded.
+    ORDERING_OPTIONS = {
+        'featured': ['-is_featured', '-created_at', '-id'],
+        'closing': ['closing_rank', '-funding_progress', '-created_at', '-id'],
+        'closing_soon': ['closing_rank', '-funding_progress', '-created_at', '-id'],
+        'min_investment': ['min_investment', 'title_sort', 'id'],
+        'title': ['title_sort', 'id'],
+        'name': ['title_sort', 'id'],
+        'newest': ['-created_at', '-id'],
+    }
+
+    @extend_schema(parameters=[
+        OpenApiParameter('search', str, description='Text match on title, description, sector and investment type '
+                         '(codes or display labels).'),
+        OpenApiParameter('sector', str, description='Sector code(s), e.g. HEALTHCARE. Repeat the parameter or '
+                         'comma-separate for several; matches any.'),
+        OpenApiParameter('risk_level', str, description='LOW | MEDIUM | HIGH. Multi-value, matches any.'),
+        OpenApiParameter('investment_type', str, description='FIXED | VARIABLE. Multi-value, matches any.'),
+        OpenApiParameter('status', str, description='NEW | ACTIVE | CLOSING_SOON. Multi-value, matches any.'),
+        OpenApiParameter('max_min_investment', float, description='Only opportunities whose min_investment is '
+                         '<= this amount.'),
+        OpenApiParameter('ordering', str, description='featured (default) | closing | min_investment | title | '
+                         'newest. Prefix with - to reverse.'),
+    ])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
-        """Return opportunities with optional filtering and search."""
+        """
+        Return open opportunities with optional filtering, search and ordering.
+
+        Multi-value params accept repeated keys or comma-separated codes; values
+        within one param are OR'ed, different params are AND'ed. Missing or
+        empty params apply no filter.
+        """
         queryset = MarketplaceOpportunity.objects.filter(status__in=['NEW', 'ACTIVE', 'CLOSING_SOON'])
+        if self.action != 'list':
+            # Detail lookups ignore list filters
+            return queryset.prefetch_related('documents', 'tags')
+
+        params = self.request.query_params
         
-        # Search
-        search = self.request.query_params.get('search', None)
+        search = params.get('search', '').strip()
         if search:
+            term = search.lower()
+            sectors = [code for code, label in MarketplaceOpportunity.SECTOR_CHOICES if term in label.lower()]
+            types = [code for code, label in MarketplaceOpportunity.INVESTMENT_TYPE_CHOICES if term in label.lower()]
             queryset = queryset.filter(
                 Q(title__icontains=search) |
                 Q(description__icontains=search) |
-                Q(sector__icontains=search)
+                Q(sector__icontains=search) |
+                Q(sector__in=sectors) |
+                Q(investment_type__icontains=search) |
+                Q(investment_type__in=types)
             )
         
-        # Filter by sector
-        sector = self.request.query_params.get('sector', None)
-        if sector:
-            queryset = queryset.filter(sector=sector)
+        for param, field in (('sector', 'sector'), ('risk_level', 'risk_level'),
+                             ('investment_type', 'investment_type'), ('status', 'status')):
+            values = query_list(params, param)
+            if values:
+                queryset = queryset.filter(**{f'{field}__in': values})
         
-        # Filter by investment type
-        investment_type = self.request.query_params.get('investment_type', None)
-        if investment_type:
-            queryset = queryset.filter(investment_type=investment_type)
+        max_min_investment = params.get('max_min_investment', '').strip()
+        if max_min_investment:
+            try:
+                queryset = queryset.filter(min_investment__lte=Decimal(max_min_investment))
+            except InvalidOperation:
+                raise ValidationError({'max_min_investment': 'Must be a number.'})
         
-        # Filter by status
-        status_filter = self.request.query_params.get('status', None)
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
+        ordering = resolve_ordering(params.get('ordering'), self.ORDERING_OPTIONS, 'featured')
+        if any(f.lstrip('-') in ('closing_rank', 'funding_progress') for f in ordering):
+            queryset = queryset.annotate(
+                closing_rank=Case(When(status='CLOSING_SOON', then=Value(0)), default=Value(1),
+                                  output_field=IntegerField()),
+                funding_progress=ExpressionWrapper(
+                    F('current_raised_amount') / F('target_raise_amount'), output_field=DecimalField()
+                ),
+            )
+        if any(f.lstrip('-') == 'title_sort' for f in ordering):
+            queryset = queryset.annotate(title_sort=Lower('title'))
         
-        # Featured first
-        queryset = queryset.order_by('-is_featured', '-created_at')
-        
-        # Only the detail view renders documents
-        if self.action == 'retrieve':
-            return queryset.prefetch_related('documents', 'tags')
-        return queryset.prefetch_related('tags')
+        return queryset.order_by(*ordering).prefetch_related('tags')
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

@@ -14,7 +14,9 @@ from django.shortcuts import get_object_or_404
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 
+from core.utils import query_list, resolve_ordering
 from .models import Investment, CapitalActivity, OwnershipTransfer, TransferDocument, SecondaryMarketInterest
 from .serializers import (
     InvestmentListSerializer,
@@ -416,25 +418,50 @@ class OwnershipTransferViewSet(viewsets.ModelViewSet):
 
 class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Read-only ViewSet exposing all PENDING ownership transfers as secondary-market listings.
+    Read-only ViewSet exposing PENDING ownership transfers without a named
+    recipient as secondary-market listings.
 
     Any authenticated user can browse investments that other users have put up for sale.
-    Filtering is supported via query params:
-      - sector       : e.g. TECHNOLOGY
+    Filtering is supported via query params (multi-value params accept repeated
+    keys or comma-separated codes; OR within a param, AND across params):
+      - search       : listing / investment name, sector code or label
+      - sector       : sector code(s), e.g. TECHNOLOGY
       - transfer_type: FULL | PARTIAL
-      - min_amount   : minimum transfer_amount
+      - min_amount   : minimum transfer_amount (same currency/decimal format as transfer_amount)
       - max_amount   : maximum transfer_amount
+      - ordering     : featured / newest (default) | asking | transfer_amount | name; prefix - to reverse
 
     Extra action:
       POST /secondary-market/{id}/express_interest/
-        Creates an InvestorInterest record against the underlying opportunity so the
-        seller/platform can follow up with interested buyers.
+        Registers the buyer's interest (SecondaryMarketInterest) for staff to review.
     """
     serializer_class = SecondaryMarketListingSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    ORDERING_OPTIONS = {
+        'featured': ['-initiated_date', '-id'],
+        'newest': ['-initiated_date', '-id'],
+        'asking': ['-transfer_amount', '-initiated_date', '-id'],  # highest asking first
+        'transfer_amount': ['transfer_amount', '-initiated_date', '-id'],
+        'name': ['listing_name', '-initiated_date', '-id'],
+        'investment_name': ['listing_name', '-initiated_date', '-id'],
+    }
+
+    @extend_schema(parameters=[
+        OpenApiParameter('search', str, description='Match listing / investment name and sector (code or label).'),
+        OpenApiParameter('sector', str, description='Sector code(s). Repeat or comma-separate; matches any.'),
+        OpenApiParameter('transfer_type', str, description='FULL | PARTIAL. Multi-value, matches any.'),
+        OpenApiParameter('min_amount', float, description='Minimum transfer_amount.'),
+        OpenApiParameter('max_amount', float, description='Maximum transfer_amount.'),
+        OpenApiParameter('ordering', str, description='featured / newest (default) | asking (highest first) | '
+                         'transfer_amount (lowest first) | name. Prefix with - to reverse.'),
+    ])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         """Return all PENDING public listings (platform-wide, not scoped to current user)."""
+        from django.db.models.functions import Coalesce, Lower
 
         # Direct transfers to a named recipient are not for sale
         qs = OwnershipTransfer.objects.filter(
@@ -444,27 +471,51 @@ class SecondaryMarketplaceViewSet(viewsets.ReadOnlyModelViewSet):
             'investment',
             'investment__opportunity',
             'from_user',
-        ).order_by('-initiated_date')
+        )
+        if self.action != 'list':
+            return qs
 
         params = self.request.query_params
 
-        sector = params.get('sector')
-        if sector:
-            qs = qs.filter(investment__opportunity__sector=sector)
+        # A listing's sector comes from its opportunity, or from the investment
+        # itself when it isn't linked to one.
+        def sector_in(codes):
+            return (
+                Q(investment__opportunity__sector__in=codes)
+                | Q(investment__opportunity__isnull=True, investment__sector__in=codes)
+            )
 
-        transfer_type = params.get('transfer_type')
-        if transfer_type:
-            qs = qs.filter(transfer_type=transfer_type)
+        search = params.get('search', '').strip()
+        if search:
+            term = search.lower()
+            sectors = [code for code, label in Investment.SECTOR_CHOICES
+                       if term in label.lower() or term in code.lower()]
+            qs = qs.filter(
+                Q(investment__opportunity__title__icontains=search)
+                | Q(investment__name__icontains=search)
+                | sector_in(sectors)
+            )
+
+        sectors = query_list(params, 'sector')
+        if sectors:
+            qs = qs.filter(sector_in(sectors))
+
+        transfer_types = query_list(params, 'transfer_type')
+        if transfer_types:
+            qs = qs.filter(transfer_type__in=transfer_types)
 
         for param, lookup in (('min_amount', 'transfer_amount__gte'), ('max_amount', 'transfer_amount__lte')):
-            raw = params.get(param)
+            raw = params.get(param, '').strip()
             if raw:
                 try:
                     qs = qs.filter(**{lookup: Decimal(raw)})
                 except InvalidOperation:
                     raise ValidationError({param: "Must be a number."})
 
-        return qs
+        ordering = resolve_ordering(params.get('ordering'), self.ORDERING_OPTIONS, 'featured')
+        if any(f.lstrip('-') == 'listing_name' for f in ordering):
+            qs = qs.annotate(listing_name=Lower(Coalesce('investment__opportunity__title', 'investment__name')))
+        return qs.order_by(*ordering)
 
     @action(detail=True, methods=['post'])
     def express_interest(self, request, pk=None):
